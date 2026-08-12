@@ -6,9 +6,7 @@ struct MarkdownDriveApp: App {
 
     init() {
         _appModel = StateObject(
-            wrappedValue: AppModel(
-                authenticationController: AppDependencies.makeAuthenticationController()
-            )
+            wrappedValue: AppDependencies.makeAppModel()
         )
     }
 
