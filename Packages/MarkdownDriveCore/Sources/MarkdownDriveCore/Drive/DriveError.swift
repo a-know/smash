@@ -4,6 +4,7 @@ public enum DriveError: Error, Equatable, Sendable {
     case authenticationRequired
     case browserBoundaryViolation
     case incompleteSearch
+    case invalidHierarchy
     case invalidResponse
     case itemIsNotFolder
     case itemNotFound
@@ -23,6 +24,8 @@ extension DriveError: LocalizedError {
             "That folder is outside the current browser location."
         case .incompleteSearch:
             "Google Drive returned an incomplete folder listing."
+        case .invalidHierarchy:
+            "The Vault contains an invalid folder hierarchy."
         case .invalidResponse:
             "Google Drive returned an invalid response."
         case .itemIsNotFolder:
