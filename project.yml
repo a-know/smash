@@ -1,0 +1,45 @@
+name: MarkdownDrive
+
+options:
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "15.0"
+  developmentLanguage: en
+  xcodeVersion: "16.4"
+
+packages:
+  MarkdownDriveCore:
+    path: Packages/MarkdownDriveCore
+
+settings:
+  base:
+    SWIFT_STRICT_CONCURRENCY: complete
+    SWIFT_VERSION: "6.0"
+
+targets:
+  MarkdownDriveMac:
+    type: application
+    platform: macOS
+    productName: Markdown Drive
+    sources:
+      - path: MarkdownDriveMac
+    dependencies:
+      - package: MarkdownDriveCore
+    settings:
+      base:
+        CURRENT_PROJECT_VERSION: 1
+        GENERATE_INFOPLIST_FILE: true
+        INFOPLIST_KEY_CFBundleDisplayName: Markdown Drive
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        MARKETING_VERSION: 0.1.0
+        PRODUCT_BUNDLE_IDENTIFIER: com.a-know.MarkdownDrive
+
+schemes:
+  MarkdownDriveMac:
+    build:
+      targets:
+        MarkdownDriveMac: all
+    run:
+      config: Debug
+    archive:
+      config: Release
