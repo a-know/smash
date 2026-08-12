@@ -280,10 +280,7 @@ private struct MarkdownEditorDetail: View {
 
                     Divider()
 
-                    TextEditor(text: documentText)
-                        .font(.system(.body, design: .monospaced))
-                        .textEditorStyle(.plain)
-                        .padding(12)
+                    NativeMarkdownEditor(text: documentText)
                         .accessibilityLabel("Markdown source editor")
                 }
                 .navigationTitle(document.isDirty ? "\(document.name) — Edited" : document.name)
