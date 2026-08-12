@@ -7,6 +7,7 @@ public struct DriveItem: Identifiable, Codable, Hashable, Sendable {
     public let id: String
     public var name: String
     public let kind: DriveItemKind
+    public let mimeType: String?
     public let parentIDs: [String]
     public var isTrashed: Bool
 
@@ -14,12 +15,14 @@ public struct DriveItem: Identifiable, Codable, Hashable, Sendable {
         id: String,
         name: String,
         kind: DriveItemKind,
+        mimeType: String? = nil,
         parentIDs: [String] = [],
         isTrashed: Bool = false
     ) {
         self.id = id
         self.name = name
         self.kind = kind
+        self.mimeType = mimeType
         self.parentIDs = parentIDs
         self.isTrashed = isTrashed
     }
