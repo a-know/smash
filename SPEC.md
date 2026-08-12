@@ -288,7 +288,18 @@ Rules:
 
 ### 5.10 Delete
 
-Support moving files/folders to Google Drive trash.
+Prefer moving files/folders to Google Drive Trash when the authenticated user's item capabilities permit it.
+
+When an item is editable but cannot be moved to Drive Trash because it is owned by another account, use a recoverable Vault-local fallback:
+
+- move the item into an app-managed folder displayed as `_SMASH_TRASH` under the Vault root;
+- identify the control folder by its persisted Drive file ID and an app property, never by its name alone;
+- exclude the control folder and all descendants from the normal Vault tree;
+- preserve the item's previous parent ID and soft-deletion time as app control metadata so restoration remains possible;
+- write and verify the restoration metadata before moving the item; if that cannot be done, leave the item unchanged;
+- if neither Drive Trash nor a move into the control folder is permitted, leave the item unchanged and show an error.
+
+The fallback is application-level soft deletion, not Google Drive Trash. It must remain inside the Vault boundary. A user manually moving an item out of `_SMASH_TRASH` makes it active again on the next refresh.
 
 Require confirmation before deleting a folder.
 

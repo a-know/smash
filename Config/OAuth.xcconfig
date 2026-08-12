@@ -1,0 +1,5 @@
+// OAuth values are supplied by the optional, Git-ignored local override.
+GOOGLE_OAUTH_CLIENT_ID =
+GOOGLE_OAUTH_CLIENT_SECRET =
+
+#include? "OAuth.local.xcconfig"
