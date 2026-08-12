@@ -21,6 +21,9 @@ targets:
     type: application
     platform: macOS
     productName: Markdown Drive
+    configFiles:
+      Debug: Config/OAuth.xcconfig
+      Release: Config/OAuth.xcconfig
     sources:
       - path: MarkdownDriveMac
     dependencies:
@@ -28,9 +31,8 @@ targets:
     settings:
       base:
         CURRENT_PROJECT_VERSION: 1
-        GENERATE_INFOPLIST_FILE: true
-        INFOPLIST_KEY_CFBundleDisplayName: Markdown Drive
-        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        GENERATE_INFOPLIST_FILE: false
+        INFOPLIST_FILE: Config/MarkdownDriveMac-Info.plist
         MARKETING_VERSION: 0.1.0
         PRODUCT_BUNDLE_IDENTIFIER: com.a-know.MarkdownDrive
 
