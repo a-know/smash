@@ -12,20 +12,24 @@ enum VaultBrowserState: Equatable {
 final class AppModel: ObservableObject {
     @Published private(set) var authenticationState: AuthenticationState
     @Published private(set) var selectedVault: Vault?
+    @Published private(set) var vaultPersistenceError: String?
     @Published private(set) var vaultBrowserState: VaultBrowserState = .idle
     @Published private(set) var isVaultBrowserPresented = false
 
     private let authenticationController: AuthenticationController
     private let driveFolderBrowser: DriveFolderBrowser
+    private let vaultStore: any VaultStore
     private var didAttemptRestore = false
 
     init(
         authenticationController: AuthenticationController,
         driveFolderBrowser: DriveFolderBrowser,
+        vaultStore: any VaultStore,
         initialAuthenticationState: AuthenticationState = .signedOut
     ) {
         self.authenticationController = authenticationController
         self.driveFolderBrowser = driveFolderBrowser
+        self.vaultStore = vaultStore
         authenticationState = initialAuthenticationState
     }
 
@@ -36,11 +40,13 @@ final class AppModel: ObservableObject {
         didAttemptRestore = true
         authenticationState = .restoring
         authenticationState = await authenticationController.restoreSession()
+        await restoreVaultIfAuthenticated()
     }
 
     func signIn() async {
         authenticationState = .signingIn
         authenticationState = await authenticationController.signIn()
+        await restoreVaultIfAuthenticated()
     }
 
     func signOut() async {
@@ -81,7 +87,10 @@ final class AppModel: ObservableObject {
 
     func selectCurrentFolderAsVault() async {
         do {
-            selectedVault = try await driveFolderBrowser.makeVault()
+            let vault = try await driveFolderBrowser.makeVault()
+            try await vaultStore.saveVault(vault)
+            selectedVault = vault
+            vaultPersistenceError = nil
             dismissVaultBrowser()
         } catch {
             vaultBrowserState = .failed(error.localizedDescription)
@@ -96,6 +105,19 @@ final class AppModel: ObservableObject {
             vaultBrowserState = .loaded(try await operation())
         } catch {
             vaultBrowserState = .failed(error.localizedDescription)
+        }
+    }
+
+    private func restoreVaultIfAuthenticated() async {
+        guard case .signedIn = authenticationState else {
+            return
+        }
+        do {
+            selectedVault = try await vaultStore.loadVault()
+            vaultPersistenceError = nil
+        } catch {
+            selectedVault = nil
+            vaultPersistenceError = "The saved Vault selection could not be restored."
         }
     }
 }

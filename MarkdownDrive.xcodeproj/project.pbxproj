@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		1B868C7244CC95C4A6200F53 /* UserDefaultsVaultStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B81B4AEC2433411CDB958D5B /* UserDefaultsVaultStore.swift */; };
 		4FF89B17AE5C5E800D8020E6 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A98FCCAE58506021D3CBC793 /* ContentView.swift */; };
 		58BF0BF27B79EAC6BD7DF23B /* GoogleOAuthTokenClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7786B073D173551DE63CE888 /* GoogleOAuthTokenClient.swift */; };
 		6BF69B316F3063DFC3D9B86B /* GoogleOAuthConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1659FD7EB9B4C307C34194DB /* GoogleOAuthConfiguration.swift */; };
@@ -32,6 +33,7 @@
 		7786B073D173551DE63CE888 /* GoogleOAuthTokenClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleOAuthTokenClient.swift; sourceTree = "<group>"; };
 		A1C5EE1FAC923FC1EA7FDA99 /* GoogleOAuthAuthorizationFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleOAuthAuthorizationFlow.swift; sourceTree = "<group>"; };
 		A98FCCAE58506021D3CBC793 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		B81B4AEC2433411CDB958D5B /* UserDefaultsVaultStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserDefaultsVaultStore.swift; sourceTree = "<group>"; };
 		C33B265F40B3EFA6CF7D3A67 /* AppDependencies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDependencies.swift; sourceTree = "<group>"; };
 		EA1480E42F5C96887C029E9A /* MarkdownDriveApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownDriveApp.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -56,6 +58,14 @@
 			path = Config;
 			sourceTree = "<group>";
 		};
+		29E82F675FAD4D172587236D /* Persistence */ = {
+			isa = PBXGroup;
+			children = (
+				B81B4AEC2433411CDB958D5B /* UserDefaultsVaultStore.swift */,
+			);
+			path = Persistence;
+			sourceTree = "<group>";
+		};
 		2F53D6A505FE8F3F1D013FFE /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -70,6 +80,7 @@
 				A98FCCAE58506021D3CBC793 /* ContentView.swift */,
 				EA1480E42F5C96887C029E9A /* MarkdownDriveApp.swift */,
 				F93C2209F7571545B20E153F /* Authentication */,
+				29E82F675FAD4D172587236D /* Persistence */,
 				7851BCFA0467F7381CAC1B4C /* State */,
 			);
 			path = MarkdownDriveMac;
@@ -185,6 +196,7 @@
 				F756B8F5959CD0022D11D57F /* KeychainRefreshTokenStore.swift in Sources */,
 				D065247233EB56FB1269FA7E /* MarkdownDriveApp.swift in Sources */,
 				FDC16AAA154FE5841DEA0EE0 /* OAuthLoopbackServer.swift in Sources */,
+				1B868C7244CC95C4A6200F53 /* UserDefaultsVaultStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -96,9 +96,13 @@ private struct VaultPlaceholderView: View {
                     ContentUnavailableView {
                         Label("No Vault Selected", systemImage: "folder.badge.questionmark")
                     } description: {
-                        Text(
-                            "Choose a Google Drive folder to discover its \(MarkdownFileRules.requiredExtension) files."
-                        )
+                        if let error = appModel.vaultPersistenceError {
+                            Text(error)
+                        } else {
+                            Text(
+                                "Choose a Google Drive folder to discover its \(MarkdownFileRules.requiredExtension) files."
+                            )
+                        }
                     } actions: {
                         Button("Choose Vault…") {
                             Task {
