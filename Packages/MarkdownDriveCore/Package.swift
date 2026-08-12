@@ -12,7 +12,7 @@ let package = Package(
         .library(
             name: "MarkdownDriveCore",
             targets: ["MarkdownDriveCore"]
-        ),
+        )
     ],
     targets: [
         .target(name: "MarkdownDriveCore"),
