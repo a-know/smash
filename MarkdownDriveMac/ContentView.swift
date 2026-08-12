@@ -85,13 +85,30 @@ private struct VaultPlaceholderView: View {
 
     var body: some View {
         NavigationSplitView {
-            ContentUnavailableView(
-                "No Vault Selected",
-                systemImage: "folder.badge.questionmark",
-                description: Text(
-                    "Choose a Google Drive folder to discover its \(MarkdownFileRules.requiredExtension) files."
-                )
-            )
+            Group {
+                if let vault = appModel.selectedVault {
+                    ContentUnavailableView(
+                        vault.displayName,
+                        systemImage: "folder",
+                        description: Text("Markdown file discovery is the next implementation step.")
+                    )
+                } else {
+                    ContentUnavailableView {
+                        Label("No Vault Selected", systemImage: "folder.badge.questionmark")
+                    } description: {
+                        Text(
+                            "Choose a Google Drive folder to discover its \(MarkdownFileRules.requiredExtension) files."
+                        )
+                    } actions: {
+                        Button("Choose Vault…") {
+                            Task {
+                                await appModel.presentVaultBrowser()
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                }
+            }
             .navigationSplitViewColumnWidth(min: 220, ideal: 280)
         } detail: {
             ContentUnavailableView(
@@ -101,7 +118,18 @@ private struct VaultPlaceholderView: View {
             )
         }
         .frame(minWidth: 760, minHeight: 480)
+        .sheet(isPresented: vaultBrowserPresentation) {
+            VaultFolderBrowserView(appModel: appModel)
+        }
         .toolbar {
+            ToolbarItem {
+                Button("Choose Vault", systemImage: "folder.badge.gearshape") {
+                    Task {
+                        await appModel.presentVaultBrowser()
+                    }
+                }
+                .accessibilityLabel("Choose Google Drive Vault folder")
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button("Sign Out", systemImage: "rectangle.portrait.and.arrow.right") {
                     Task {
@@ -112,12 +140,139 @@ private struct VaultPlaceholderView: View {
             }
         }
     }
+
+    private var vaultBrowserPresentation: Binding<Bool> {
+        Binding(
+            get: { appModel.isVaultBrowserPresented },
+            set: { isPresented in
+                if !isPresented {
+                    appModel.dismissVaultBrowser()
+                }
+            }
+        )
+    }
+}
+
+private struct VaultFolderBrowserView: View {
+    @ObservedObject var appModel: AppModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            browserContent
+            Divider()
+            footer
+        }
+        .frame(minWidth: 560, idealWidth: 640, minHeight: 420, idealHeight: 520)
+    }
+
+    @ViewBuilder
+    private var header: some View {
+        HStack(spacing: 12) {
+            Button("Back", systemImage: "chevron.left") {
+                Task {
+                    await appModel.navigateBack()
+                }
+            }
+            .disabled(!canNavigateBack)
+
+            Text(currentPath)
+                .lineLimit(1)
+                .truncationMode(.head)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button("Reload", systemImage: "arrow.clockwise") {
+                Task {
+                    await appModel.loadMyDrive()
+                }
+            }
+            .labelStyle(.iconOnly)
+            .accessibilityLabel("Reload My Drive folders")
+        }
+        .padding()
+    }
+
+    @ViewBuilder
+    private var browserContent: some View {
+        switch appModel.vaultBrowserState {
+        case .idle, .loading:
+            ProgressView("Loading Google Drive folders…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .failed(let message):
+            ContentUnavailableView {
+                Label("Could Not Load Folders", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(message)
+            } actions: {
+                Button("Try Again") {
+                    Task {
+                        await appModel.loadMyDrive()
+                    }
+                }
+            }
+        case .loaded(let snapshot):
+            if snapshot.childFolders.isEmpty {
+                ContentUnavailableView(
+                    "No Subfolders",
+                    systemImage: "folder",
+                    description: Text("You can use the current folder as the Vault.")
+                )
+            } else {
+                List(snapshot.childFolders, id: \.id) { folder in
+                    Button {
+                        Task {
+                            await appModel.openFolder(id: folder.id)
+                        }
+                    } label: {
+                        Label(folder.name, systemImage: "folder")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Open folder \(folder.name)")
+                }
+            }
+        }
+    }
+
+    private var footer: some View {
+        HStack {
+            Button("Cancel", role: .cancel) {
+                appModel.dismissVaultBrowser()
+            }
+            Spacer()
+            Button("Use This Folder") {
+                Task {
+                    await appModel.selectCurrentFolderAsVault()
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(currentFolder == nil)
+        }
+        .padding()
+    }
+
+    private var currentSnapshot: DriveFolderBrowserSnapshot? {
+        guard case .loaded(let snapshot) = appModel.vaultBrowserState else {
+            return nil
+        }
+        return snapshot
+    }
+
+    private var currentFolder: DriveItem? {
+        currentSnapshot?.currentFolder
+    }
+
+    private var canNavigateBack: Bool {
+        currentSnapshot?.canNavigateBack == true
+    }
+
+    private var currentPath: String {
+        currentSnapshot?.path.map(\.name).joined(separator: " / ") ?? "My Drive"
+    }
 }
 
 #Preview("Signed Out") {
-    ContentView(
-        appModel: AppModel(
-            authenticationController: AppDependencies.makeAuthenticationController()
-        )
-    )
+    ContentView(appModel: AppDependencies.makeAppModel())
 }
