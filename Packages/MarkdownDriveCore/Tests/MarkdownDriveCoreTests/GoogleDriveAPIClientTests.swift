@@ -120,6 +120,85 @@ final class GoogleDriveAPIClientTests: XCTestCase {
         }
     }
 
+    func testDownloadFileReturnsUTF8BytesAndStableRevision() async throws {
+        let metadata = """
+            {
+              "id": "file-1",
+              "name": "memo.md",
+              "mimeType": "text/markdown",
+              "parents": ["vault-root"],
+              "trashed": false,
+              "modifiedTime": "2026-08-12T12:34:56.123Z",
+              "version": "42",
+              "capabilities": { "canDownload": true }
+            }
+            """
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(statusCode: 200, body: metadata),
+            .success(statusCode: 200, body: "# 日本語\n"),
+            .success(statusCode: 200, body: metadata),
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        let download = try await client.downloadFile(id: "file-1")
+
+        XCTAssertEqual(download.item.id, "file-1")
+        XCTAssertEqual(download.data, Data("# 日本語\n".utf8))
+        XCTAssertEqual(download.revision.version, "42")
+
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 3)
+        XCTAssertEqual(queryValue(named: "alt", in: requests[1]), "media")
+        XCTAssertEqual(queryValue(named: "supportsAllDrives", in: requests[1]), "true")
+    }
+
+    func testDownloadFileRejectsRemoteChangeDuringTransfer() async {
+        let metadataVersion1 = fileMetadata(version: "1")
+        let metadataVersion2 = fileMetadata(version: "2")
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(statusCode: 200, body: metadataVersion1),
+            .success(statusCode: 200, body: "content"),
+            .success(statusCode: 200, body: metadataVersion2),
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        do {
+            _ = try await client.downloadFile(id: "file-1")
+            XCTFail("Expected changing file to fail")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .fileChangedDuringDownload)
+        }
+    }
+
+    func testDownloadFileHonorsDriveDownloadCapability() async {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(
+                statusCode: 200,
+                body: fileMetadata(version: "1", canDownload: false)
+            )
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        do {
+            _ = try await client.downloadFile(id: "file-1")
+            XCTFail("Expected download restriction")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .downloadNotAllowed)
+        }
+
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 1)
+    }
+
     func testListChildrenClassifies403RateLimitReason() async {
         let transport = FakeDriveHTTPTransport(responses: [
             .success(
@@ -193,6 +272,21 @@ final class GoogleDriveAPIClientTests: XCTestCase {
     private func queryValue(named name: String, in request: URLRequest) -> String? {
         request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?
             .queryItems?.first(where: { $0.name == name })?.value
+    }
+
+    private func fileMetadata(version: String, canDownload: Bool = true) -> String {
+        """
+        {
+          "id": "file-1",
+          "name": "memo.md",
+          "mimeType": "text/markdown",
+          "parents": ["vault-root"],
+          "trashed": false,
+          "modifiedTime": "2026-08-12T12:34:56Z",
+          "version": "\(version)",
+          "capabilities": { "canDownload": \(canDownload) }
+        }
+        """
     }
 }
 

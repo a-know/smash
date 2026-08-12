@@ -1,6 +1,6 @@
 import Foundation
 
-public struct GoogleDriveAPIClient: DriveClient {
+public struct GoogleDriveAPIClient: DriveClient, DriveContentClient {
     public static let folderMimeType = "application/vnd.google-apps.folder"
 
     private let accessTokenProvider: any DriveAccessTokenProvider
@@ -18,16 +18,39 @@ public struct GoogleDriveAPIClient: DriveClient {
     }
 
     public func getItem(id: String) async throws -> DriveItem {
+        try await getFileResource(id: id).driveItem
+    }
+
+    public func downloadFile(id: String) async throws -> DriveFileDownload {
+        let metadataBeforeDownload = try await getFileResource(id: id)
+        try validateDownload(metadataBeforeDownload)
+        guard let revisionBeforeDownload = metadataBeforeDownload.revision else {
+            throw DriveError.invalidResponse
+        }
+
         let url = baseURL.appendingPathComponent("files").appendingPathComponent(id)
         let request = try await authorizedRequest(
             url: url,
             queryItems: [
-                URLQueryItem(name: "fields", value: Self.fileFields),
+                URLQueryItem(name: "alt", value: "media"),
                 URLQueryItem(name: "supportsAllDrives", value: "true"),
             ]
         )
         let data = try await perform(request)
-        return try decodeFile(from: data).driveItem
+        let metadataAfterDownload = try await getFileResource(id: id)
+        try validateDownload(metadataAfterDownload)
+        guard let revisionAfterDownload = metadataAfterDownload.revision else {
+            throw DriveError.invalidResponse
+        }
+        guard revisionBeforeDownload == revisionAfterDownload else {
+            throw DriveError.fileChangedDuringDownload
+        }
+
+        return DriveFileDownload(
+            item: metadataAfterDownload.driveItem,
+            data: data,
+            revision: revisionAfterDownload
+        )
     }
 
     public func listChildren(of folderID: String) async throws -> [DriveItem] {
@@ -75,6 +98,30 @@ public struct GoogleDriveAPIClient: DriveClient {
             queryItems: queryItems
         )
         return try decodeFileList(from: await perform(request))
+    }
+
+    private func getFileResource(id: String) async throws -> GoogleDriveFile {
+        let url = baseURL.appendingPathComponent("files").appendingPathComponent(id)
+        let request = try await authorizedRequest(
+            url: url,
+            queryItems: [
+                URLQueryItem(name: "fields", value: Self.fileFields),
+                URLQueryItem(name: "supportsAllDrives", value: "true"),
+            ]
+        )
+        return try decodeFile(from: await perform(request))
+    }
+
+    private func validateDownload(_ file: GoogleDriveFile) throws {
+        guard file.mimeType != Self.folderMimeType else {
+            throw DriveError.itemIsNotFile
+        }
+        guard !file.trashed else {
+            throw DriveError.itemNotFound
+        }
+        guard file.capabilities?.canDownload != false else {
+            throw DriveError.downloadNotAllowed
+        }
     }
 
     private func authorizedRequest(
@@ -167,7 +214,8 @@ public struct GoogleDriveAPIClient: DriveClient {
         return rateLimitReasons.contains(reason)
     }
 
-    private static let fileFields = "id,name,mimeType,parents,trashed"
+    private static let fileFields =
+        "id,name,mimeType,parents,trashed,modifiedTime,version,capabilities(canDownload)"
     private static let rateLimitReasons = [
         "rateLimitExceeded",
         "sharingRateLimitExceeded",
@@ -212,6 +260,9 @@ private struct GoogleDriveFile: Decodable {
     let mimeType: String
     let parents: [String]
     let trashed: Bool
+    let modifiedTime: Date?
+    let version: String?
+    let capabilities: GoogleDriveFileCapabilities?
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -219,6 +270,9 @@ private struct GoogleDriveFile: Decodable {
         case mimeType
         case parents
         case trashed
+        case modifiedTime
+        case version
+        case capabilities
     }
 
     init(from decoder: any Decoder) throws {
@@ -228,6 +282,16 @@ private struct GoogleDriveFile: Decodable {
         mimeType = try container.decode(String.self, forKey: .mimeType)
         parents = try container.decodeIfPresent([String].self, forKey: .parents) ?? []
         trashed = try container.decodeIfPresent(Bool.self, forKey: .trashed) ?? false
+        version = try container.decodeIfPresent(String.self, forKey: .version)
+        capabilities = try container.decodeIfPresent(
+            GoogleDriveFileCapabilities.self,
+            forKey: .capabilities
+        )
+        if let value = try container.decodeIfPresent(String.self, forKey: .modifiedTime) {
+            modifiedTime = Self.parseModifiedTime(value)
+        } else {
+            modifiedTime = nil
+        }
     }
 
     var driveItem: DriveItem {
@@ -240,4 +304,23 @@ private struct GoogleDriveFile: Decodable {
             isTrashed: trashed
         )
     }
+
+    var revision: DriveFileRevision? {
+        guard let version, let modifiedTime else {
+            return nil
+        }
+        return DriveFileRevision(version: version, modifiedTime: modifiedTime)
+    }
+
+    private static func parseModifiedTime(_ value: String) -> Date? {
+        let fractionalStyle = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
+        if let date = try? Date(value, strategy: fractionalStyle) {
+            return date
+        }
+        return try? Date(value, strategy: .iso8601)
+    }
+}
+
+private struct GoogleDriveFileCapabilities: Decodable {
+    let canDownload: Bool
 }
