@@ -87,11 +87,7 @@ private struct VaultPlaceholderView: View {
         NavigationSplitView {
             Group {
                 if let vault = appModel.selectedVault {
-                    ContentUnavailableView(
-                        vault.displayName,
-                        systemImage: "folder",
-                        description: Text("Markdown file discovery is the next implementation step.")
-                    )
+                    VaultSidebar(appModel: appModel, vault: vault)
                 } else {
                     ContentUnavailableView {
                         Label("No Vault Selected", systemImage: "folder.badge.questionmark")
@@ -127,6 +123,15 @@ private struct VaultPlaceholderView: View {
         }
         .toolbar {
             ToolbarItem {
+                Button("Refresh", systemImage: "arrow.clockwise") {
+                    Task {
+                        await appModel.loadVaultTree()
+                    }
+                }
+                .disabled(appModel.selectedVault == nil)
+                .accessibilityLabel("Refresh Vault contents")
+            }
+            ToolbarItem {
                 Button("Choose Vault", systemImage: "folder.badge.gearshape") {
                     Task {
                         await appModel.presentVaultBrowser()
@@ -154,6 +159,44 @@ private struct VaultPlaceholderView: View {
                 }
             }
         )
+    }
+}
+
+private struct VaultSidebar: View {
+    @ObservedObject var appModel: AppModel
+    let vault: Vault
+
+    var body: some View {
+        Group {
+            switch appModel.vaultTreeState {
+            case .idle, .loading:
+                ProgressView("Loading \(vault.displayName)…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .failed(let message):
+                ContentUnavailableView {
+                    Label("Could Not Load Vault", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(message)
+                } actions: {
+                    Button("Try Again") {
+                        Task {
+                            await appModel.loadVaultTree()
+                        }
+                    }
+                }
+            case .loaded(let tree):
+                List {
+                    OutlineGroup([tree.root], children: \.outlineChildren) { node in
+                        Label(
+                            node.item.name,
+                            systemImage: node.item.kind == .folder ? "folder" : "doc.text"
+                        )
+                    }
+                }
+                .accessibilityLabel("Vault files and folders")
+            }
+        }
+        .navigationTitle(vault.displayName)
     }
 }
 

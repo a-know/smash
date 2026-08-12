@@ -12,6 +12,7 @@ enum AppDependencies {
         return AppModel(
             authenticationController: authenticationController,
             driveFolderBrowser: DriveFolderBrowser(driveClient: driveClient),
+            vaultTreeLoader: VaultTreeLoader(driveClient: driveClient),
             vaultStore: UserDefaultsVaultStore()
         )
     }

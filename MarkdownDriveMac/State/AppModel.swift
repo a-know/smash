@@ -8,27 +8,38 @@ enum VaultBrowserState: Equatable {
     case failed(String)
 }
 
+enum VaultTreeState: Equatable {
+    case idle
+    case loading
+    case loaded(VaultTree)
+    case failed(String)
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var authenticationState: AuthenticationState
     @Published private(set) var selectedVault: Vault?
     @Published private(set) var vaultPersistenceError: String?
     @Published private(set) var vaultBrowserState: VaultBrowserState = .idle
+    @Published private(set) var vaultTreeState: VaultTreeState = .idle
     @Published private(set) var isVaultBrowserPresented = false
 
     private let authenticationController: AuthenticationController
     private let driveFolderBrowser: DriveFolderBrowser
+    private let vaultTreeLoader: VaultTreeLoader
     private let vaultStore: any VaultStore
     private var didAttemptRestore = false
 
     init(
         authenticationController: AuthenticationController,
         driveFolderBrowser: DriveFolderBrowser,
+        vaultTreeLoader: VaultTreeLoader,
         vaultStore: any VaultStore,
         initialAuthenticationState: AuthenticationState = .signedOut
     ) {
         self.authenticationController = authenticationController
         self.driveFolderBrowser = driveFolderBrowser
+        self.vaultTreeLoader = vaultTreeLoader
         self.vaultStore = vaultStore
         authenticationState = initialAuthenticationState
     }
@@ -53,6 +64,7 @@ final class AppModel: ObservableObject {
         authenticationState = await authenticationController.signOut()
         if authenticationState == .signedOut {
             selectedVault = nil
+            vaultTreeState = .idle
             dismissVaultBrowser()
         }
     }
@@ -92,6 +104,7 @@ final class AppModel: ObservableObject {
             selectedVault = vault
             vaultPersistenceError = nil
             dismissVaultBrowser()
+            await loadVaultTree()
         } catch {
             vaultBrowserState = .failed(error.localizedDescription)
         }
@@ -115,9 +128,25 @@ final class AppModel: ObservableObject {
         do {
             selectedVault = try await vaultStore.loadVault()
             vaultPersistenceError = nil
+            await loadVaultTree()
         } catch {
             selectedVault = nil
             vaultPersistenceError = "The saved Vault selection could not be restored."
+        }
+    }
+
+    func loadVaultTree() async {
+        guard let selectedVault else {
+            vaultTreeState = .idle
+            return
+        }
+        vaultTreeState = .loading
+        do {
+            vaultTreeState = .loaded(
+                try await vaultTreeLoader.load(vault: selectedVault)
+            )
+        } catch {
+            vaultTreeState = .failed(error.localizedDescription)
         }
     }
 }
