@@ -111,11 +111,7 @@ private struct VaultPlaceholderView: View {
             }
             .navigationSplitViewColumnWidth(min: 220, ideal: 280)
         } detail: {
-            ContentUnavailableView(
-                "No Document Open",
-                systemImage: "doc.text",
-                description: Text("Select a Markdown file from the sidebar to begin editing.")
-            )
+            MarkdownEditorDetail(appModel: appModel)
         }
         .frame(minWidth: 760, minHeight: 480)
         .sheet(isPresented: vaultBrowserPresentation) {
@@ -137,6 +133,8 @@ private struct VaultPlaceholderView: View {
                         await appModel.presentVaultBrowser()
                     }
                 }
+                .disabled(appModel.hasDirtyDocument)
+                .help("Save or discard the current edits before changing Vaults.")
                 .accessibilityLabel("Choose Google Drive Vault folder")
             }
             ToolbarItem(placement: .primaryAction) {
@@ -145,6 +143,8 @@ private struct VaultPlaceholderView: View {
                         await appModel.signOut()
                     }
                 }
+                .disabled(appModel.hasDirtyDocument)
+                .help("Save or discard the current edits before signing out.")
                 .accessibilityLabel("Sign out of Google")
             }
         }
@@ -185,18 +185,122 @@ private struct VaultSidebar: View {
                     }
                 }
             case .loaded(let tree):
-                List {
+                List(selection: treeSelection) {
                     OutlineGroup([tree.root], children: \.outlineChildren) { node in
                         Label(
                             node.item.name,
                             systemImage: node.item.kind == .folder ? "folder" : "doc.text"
                         )
+                        .tag(node.item.id)
                     }
                 }
                 .accessibilityLabel("Vault files and folders")
             }
         }
         .navigationTitle(vault.displayName)
+        .alert("Discard unsaved changes?", isPresented: discardConfirmation) {
+            Button("Cancel", role: .cancel) {
+                appModel.cancelPendingDocumentOpen()
+            }
+            Button("Discard and Open", role: .destructive) {
+                Task {
+                    await appModel.confirmDiscardAndOpenPendingDocument()
+                }
+            }
+        } message: {
+            Text("The current document has edits that have not been saved to Google Drive.")
+        }
+    }
+
+    private var treeSelection: Binding<String?> {
+        Binding(
+            get: { appModel.selectedTreeItemID },
+            set: { id in
+                Task {
+                    await appModel.selectTreeItem(id: id)
+                }
+            }
+        )
+    }
+
+    private var discardConfirmation: Binding<Bool> {
+        Binding(
+            get: { appModel.isDiscardConfirmationPresented },
+            set: { appModel.setDiscardConfirmationPresented($0) }
+        )
+    }
+}
+
+private struct MarkdownEditorDetail: View {
+    @ObservedObject var appModel: AppModel
+
+    var body: some View {
+        Group {
+            switch appModel.documentState {
+            case .idle:
+                ContentUnavailableView(
+                    "No Document Open",
+                    systemImage: "doc.text",
+                    description: Text("Select a Markdown file from the sidebar to begin editing.")
+                )
+            case .loading:
+                ProgressView("Opening Markdown file…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .failed(_, let message):
+                ContentUnavailableView {
+                    Label("Could Not Open Document", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(message)
+                } actions: {
+                    Button("Try Again") {
+                        Task {
+                            await appModel.retryDocumentLoad()
+                        }
+                    }
+                }
+            case .loaded(let document):
+                VStack(spacing: 0) {
+                    HStack {
+                        Text(document.name)
+                            .font(.headline)
+                            .lineLimit(1)
+                        Spacer()
+                        if document.isDirty {
+                            Label("Edited", systemImage: "circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("Loaded from Google Drive")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+
+                    Divider()
+
+                    TextEditor(text: documentText)
+                        .font(.system(.body, design: .monospaced))
+                        .textEditorStyle(.plain)
+                        .padding(12)
+                        .accessibilityLabel("Markdown source editor")
+                }
+                .navigationTitle(document.isDirty ? "\(document.name) — Edited" : document.name)
+            }
+        }
+    }
+
+    private var documentText: Binding<String> {
+        Binding(
+            get: {
+                guard case .loaded(let document) = appModel.documentState else {
+                    return ""
+                }
+                return document.text
+            },
+            set: { appModel.updateDocumentText($0) }
+        )
     }
 }
 

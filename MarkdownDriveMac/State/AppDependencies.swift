@@ -13,6 +13,7 @@ enum AppDependencies {
             authenticationController: authenticationController,
             driveFolderBrowser: DriveFolderBrowser(driveClient: driveClient),
             vaultTreeLoader: VaultTreeLoader(driveClient: driveClient),
+            vaultDocumentLoader: VaultDocumentLoader(driveContentClient: driveClient),
             vaultStore: UserDefaultsVaultStore()
         )
     }
