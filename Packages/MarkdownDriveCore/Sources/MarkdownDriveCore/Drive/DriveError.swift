@@ -19,6 +19,7 @@ public enum DriveError: Error, Equatable, Sendable {
     case serverUnavailable
     case unexpectedStatus(Int)
     case vaultBoundaryViolation
+    case writeStatusUnknown
 }
 
 extension DriveError: LocalizedError {
@@ -60,6 +61,8 @@ extension DriveError: LocalizedError {
             "Google Drive returned HTTP status \(statusCode)."
         case .vaultBoundaryViolation:
             "That file is outside the selected Vault."
+        case .writeStatusUnknown:
+            "Google Drive may have received the write, but its result could not be confirmed."
         }
     }
 }

@@ -24,7 +24,11 @@ public actor VaultDocumentSaver {
         } catch {
             throw Self.preflightError(from: error)
         }
-        try validate(metadata: remoteMetadata, document: document, tree: tree)
+        let parentID = try await validateCurrentVaultMembership(
+            metadata: remoteMetadata,
+            document: document,
+            tree: tree
+        )
         guard remoteMetadata.revision == document.remoteRevision else {
             throw DocumentSaveError.conflict(remoteRevision: remoteMetadata.revision)
         }
@@ -36,12 +40,16 @@ public actor VaultDocumentSaver {
                 data: Data(document.text.utf8),
                 mimeType: "text/markdown; charset=utf-8"
             )
-        } catch DriveError.networkFailure {
+        } catch DriveError.writeStatusUnknown {
             throw DocumentSaveError.updateStatusUnknown
         } catch {
             throw Self.updateError(from: error)
         }
-        try validate(metadata: updatedMetadata, document: document, tree: tree)
+        try validateWriteResponse(
+            metadata: updatedMetadata,
+            document: document,
+            expectedParentID: parentID
+        )
 
         var savedDocument = document
         savedDocument.markSaved(revision: updatedMetadata.revision)
@@ -68,10 +76,11 @@ public actor VaultDocumentSaver {
         } catch {
             throw Self.preflightError(from: error)
         }
-        try validate(metadata: remoteMetadata, document: document, tree: tree)
-        guard let parentID = remoteMetadata.item.parentIDs.first(where: tree.containsFolder(id:)) else {
-            throw DocumentSaveError.vaultBoundaryViolation
-        }
+        let parentID = try await validateCurrentVaultMembership(
+            metadata: remoteMetadata,
+            document: document,
+            tree: tree
+        )
 
         let copyMetadata: DriveFileMetadata
         do {
@@ -81,7 +90,7 @@ public actor VaultDocumentSaver {
                 data: Data(document.text.utf8),
                 mimeType: "text/markdown; charset=utf-8"
             )
-        } catch DriveError.networkFailure {
+        } catch DriveError.writeStatusUnknown {
             throw DocumentSaveError.updateStatusUnknown
         } catch {
             throw Self.updateError(from: error)
@@ -89,9 +98,10 @@ public actor VaultDocumentSaver {
         guard copyMetadata.item.id != document.fileID,
             copyMetadata.item.kind == .file,
             copyMetadata.item.name == trimmedName,
-            copyMetadata.item.parentIDs.contains(parentID)
+            copyMetadata.item.parentIDs.contains(parentID),
+            !copyMetadata.item.isTrashed
         else {
-            throw DocumentSaveError.vaultBoundaryViolation
+            throw DocumentSaveError.updateStatusUnknown
         }
 
         return MarkdownDocument(
@@ -118,7 +128,11 @@ public actor VaultDocumentSaver {
         } catch {
             throw Self.preflightError(from: error)
         }
-        try validate(metadata: remoteMetadata, document: document, tree: tree)
+        let parentID = try await validateCurrentVaultMembership(
+            metadata: remoteMetadata,
+            document: document,
+            tree: tree
+        )
 
         let updatedMetadata: DriveFileMetadata
         do {
@@ -127,29 +141,89 @@ public actor VaultDocumentSaver {
                 data: Data(document.text.utf8),
                 mimeType: "text/markdown; charset=utf-8"
             )
-        } catch DriveError.networkFailure {
+        } catch DriveError.writeStatusUnknown {
             throw DocumentSaveError.updateStatusUnknown
         } catch {
             throw Self.updateError(from: error)
         }
-        try validate(metadata: updatedMetadata, document: document, tree: tree)
+        try validateWriteResponse(
+            metadata: updatedMetadata,
+            document: document,
+            expectedParentID: parentID
+        )
 
         var savedDocument = document
         savedDocument.markSaved(revision: updatedMetadata.revision)
         return savedDocument
     }
 
-    private func validate(
+    private func validateCurrentVaultMembership(
         metadata: DriveFileMetadata,
         document: MarkdownDocument,
         tree: VaultTree
+    ) async throws -> String {
+        guard metadata.item.id == document.fileID,
+            metadata.item.kind == .file,
+            MarkdownFileRules.isMarkdownFile(name: metadata.item.name),
+            !metadata.item.isTrashed
+        else {
+            throw DocumentSaveError.vaultBoundaryViolation
+        }
+
+        let vaultRootID = tree.root.item.id
+        for parentID in metadata.item.parentIDs {
+            if try await hasCurrentPathToVaultRoot(
+                from: parentID,
+                vaultRootID: vaultRootID
+            ) {
+                return parentID
+            }
+        }
+        throw DocumentSaveError.vaultBoundaryViolation
+    }
+
+    private func hasCurrentPathToVaultRoot(
+        from startingFolderID: String,
+        vaultRootID: String
+    ) async throws -> Bool {
+        var pendingFolderIDs = [startingFolderID]
+        var visitedFolderIDs: Set<String> = []
+
+        while let folderID = pendingFolderIDs.popLast() {
+            if folderID == vaultRootID {
+                return true
+            }
+            guard visitedFolderIDs.insert(folderID).inserted else {
+                continue
+            }
+
+            let folder: DriveItem
+            do {
+                folder = try await driveWriteClient.getItem(id: folderID)
+            } catch {
+                throw Self.membershipError(from: error)
+            }
+            guard folder.kind == .folder, !folder.isTrashed else {
+                continue
+            }
+            pendingFolderIDs.append(contentsOf: folder.parentIDs)
+        }
+
+        return false
+    }
+
+    private func validateWriteResponse(
+        metadata: DriveFileMetadata,
+        document: MarkdownDocument,
+        expectedParentID: String
     ) throws {
         guard metadata.item.id == document.fileID,
             metadata.item.kind == .file,
             MarkdownFileRules.isMarkdownFile(name: metadata.item.name),
-            metadata.item.parentIDs.contains(where: tree.containsFolder(id:))
+            metadata.item.parentIDs.contains(expectedParentID),
+            !metadata.item.isTrashed
         else {
-            throw DocumentSaveError.vaultBoundaryViolation
+            throw DocumentSaveError.updateStatusUnknown
         }
     }
 
@@ -159,6 +233,9 @@ public actor VaultDocumentSaver {
         }
         guard let driveError = error as? DriveError else {
             return .unexpected
+        }
+        if driveError == .authenticationRequired {
+            return .authentication(.reauthenticationRequired)
         }
         return driveError == .itemNotFound ? .remoteDeleted : .drive(driveError)
     }
@@ -170,6 +247,25 @@ public actor VaultDocumentSaver {
         guard let driveError = error as? DriveError else {
             return .unexpected
         }
+        if driveError == .authenticationRequired {
+            return .authentication(.reauthenticationRequired)
+        }
         return driveError == .itemNotFound ? .remoteDeleted : .drive(driveError)
+    }
+
+    private static func membershipError(from error: any Error) -> DocumentSaveError {
+        if let authenticationError = error as? AuthenticationError {
+            return .authentication(authenticationError)
+        }
+        guard let driveError = error as? DriveError else {
+            return .unexpected
+        }
+        if driveError == .authenticationRequired {
+            return .authentication(.reauthenticationRequired)
+        }
+        if driveError == .itemNotFound {
+            return .vaultBoundaryViolation
+        }
+        return .drive(driveError)
     }
 }

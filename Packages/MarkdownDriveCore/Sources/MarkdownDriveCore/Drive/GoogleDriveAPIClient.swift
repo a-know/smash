@@ -80,9 +80,7 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
         request.httpBody = data
         request.setValue(mimeType, forHTTPHeaderField: "Content-Type")
 
-        let updatedFile = try decodeFile(from: await perform(request))
-        try validateModification(updatedFile)
-        return try updatedFile.metadata
+        return try await performWrite(request)
     }
 
     public func createFile(
@@ -114,9 +112,7 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
             forHTTPHeaderField: "Content-Type"
         )
 
-        let createdFile = try decodeFile(from: await perform(request))
-        try validateModification(createdFile)
-        return try createdFile.metadata
+        return try await performWrite(request)
     }
 
     public func listChildren(of folderID: String) async throws -> [DriveItem] {
@@ -264,6 +260,27 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
             throw Self.error(for: response.statusCode, responseBody: data)
         }
         return data
+    }
+
+    private func performWrite(_ request: URLRequest) async throws -> DriveFileMetadata {
+        let data: Data
+        do {
+            data = try await perform(request)
+        } catch DriveError.networkFailure,
+            DriveError.serverUnavailable,
+            DriveError.invalidResponse
+        {
+            throw DriveError.writeStatusUnknown
+        }
+
+        do {
+            let file = try decodeFile(from: data)
+            try validateModification(file)
+            return try file.metadata
+        } catch {
+            // A successful HTTP response means Drive may already have committed the write.
+            throw DriveError.writeStatusUnknown
+        }
     }
 
     private func decodeFile(from data: Data) throws -> GoogleDriveFile {

@@ -221,12 +221,58 @@ final class GoogleDriveAPIClientTests: XCTestCase {
         XCTAssertEqual(requests[0].httpMethod, "PATCH")
         XCTAssertEqual(requests[0].url?.host, "www.googleapis.com")
         XCTAssertEqual(requests[0].url?.path, "/upload/drive/v3/files/file-1")
+        XCTAssertEqual(
+            requests[0].value(forHTTPHeaderField: "Authorization"),
+            "Bearer fake-access-token"
+        )
         XCTAssertEqual(queryValue(named: "uploadType", in: requests[0]), "media")
         XCTAssertEqual(requests[0].httpBody, Data("# Updated\n".utf8))
         XCTAssertEqual(
             requests[0].value(forHTTPHeaderField: "Content-Type"),
             "text/markdown; charset=utf-8"
         )
+    }
+
+    func testUpdateClassifiesServerFailureAsUnknownWriteStatus() async {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(statusCode: 503, body: "{}")
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        do {
+            _ = try await client.updateFileContent(
+                id: "file-1",
+                data: Data("new text".utf8),
+                mimeType: "text/markdown"
+            )
+            XCTFail("Expected unknown write status")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .writeStatusUnknown)
+        }
+    }
+
+    func testUpdateKeepsAuthenticationFailureDefinite() async {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(statusCode: 401, body: "{}")
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        do {
+            _ = try await client.updateFileContent(
+                id: "file-1",
+                data: Data("new text".utf8),
+                mimeType: "text/markdown"
+            )
+            XCTFail("Expected authentication failure")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .authenticationRequired)
+        }
     }
 
     func testGetsRevisionAndRejectsModificationRestriction() async {
@@ -281,6 +327,28 @@ final class GoogleDriveAPIClientTests: XCTestCase {
         XCTAssertTrue(body.contains(#""name":"memo (Conflict Copy).md""#))
         XCTAssertTrue(body.contains(#""parents":["vault"]"#))
         XCTAssertTrue(body.contains("local text"))
+    }
+
+    func testCreateClassifiesMalformedSuccessAsUnknownWriteStatus() async {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(statusCode: 200, body: "not-json")
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        do {
+            _ = try await client.createFile(
+                name: "copy.md",
+                parentID: "vault",
+                data: Data("local text".utf8),
+                mimeType: "text/markdown"
+            )
+            XCTFail("Expected unknown write status")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .writeStatusUnknown)
+        }
     }
 
     func testListChildrenClassifies403RateLimitReason() async {

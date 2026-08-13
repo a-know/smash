@@ -10,6 +10,7 @@ public protocol DriveContentClient: Sendable {
 }
 
 public protocol DriveWriteClient: Sendable {
+    func getItem(id: String) async throws -> DriveItem
     func getFileMetadata(id: String) async throws -> DriveFileMetadata
     func updateFileContent(id: String, data: Data, mimeType: String) async throws -> DriveFileMetadata
     func createFile(

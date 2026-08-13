@@ -78,7 +78,7 @@ The normal save path is:
 
 1. verify that the file is present in the loaded Vault tree;
 2. fetch current metadata and modification capabilities;
-3. verify that the current parent is still inside the Vault;
+3. fetch the current parent chain and verify that it still reaches the Vault root;
 4. compare the current revision with the opened revision;
 5. stop and show the conflict UI when they differ;
 6. otherwise, upload UTF-8 Markdown with `files.update` to the same file ID; and
@@ -91,16 +91,18 @@ The conflict UI keeps the local buffer and offers four deliberate outcomes:
 - overwrite the original after a second destructive confirmation; or
 - cancel and continue editing.
 
-Google Drive API v3 does not document an `files.update` version precondition or compare-and-swap
+Google Drive API v3 does not document a `files.update` version precondition or compare-and-swap
 parameter. Consequently, the metadata comparison and media update are separate requests. The
 preflight comparison prevents ordinary stale-editor overwrites but cannot make the network operation
 atomic against a change occurring in the narrow interval between those requests. This limitation
 must be reconsidered if Google introduces a documented conditional-update mechanism.
 
-An update request that loses its connection has an ambiguous outcome: Drive might have accepted it.
-The application does not retry such writes automatically. It retains the local text and reports that
-the save status is unknown. A later normal save rechecks Drive metadata first, turning a previously
-accepted update into a conflict instead of blindly repeating the write.
+A write that loses its connection, receives a Drive 5xx response, or receives a success response that
+cannot be validated has an ambiguous outcome: Drive might have committed it. The application does not
+retry such writes automatically. It retains the local text and reports that the save status is
+unknown. A later normal save rechecks Drive metadata first, turning a previously accepted update into
+a conflict instead of blindly repeating the write. Conflict-copy creation uses the same rule to avoid
+silently creating duplicate copies.
 
 Primary Drive references:
 

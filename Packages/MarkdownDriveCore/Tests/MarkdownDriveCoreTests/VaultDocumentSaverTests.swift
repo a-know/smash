@@ -75,11 +75,11 @@ final class VaultDocumentSaverTests: XCTestCase {
         XCTAssertEqual(updateCount, 0)
     }
 
-    func testNetworkFailureDuringUpdateIsAmbiguousAndIsNotRetried() async {
+    func testUnknownWriteStatusDuringUpdateIsNotRetried() async {
         let openedRevision = revision("1")
         let client = FakeDriveWriteClient(
             metadataResult: .success(metadata(revision: openedRevision)),
-            updateResult: .failure(.networkFailure)
+            updateResult: .failure(.writeStatusUnknown)
         )
         let saver = VaultDocumentSaver(driveWriteClient: client)
         var document = makeDocument(revision: openedRevision)
@@ -119,6 +119,92 @@ final class VaultDocumentSaverTests: XCTestCase {
 
         let updateCount = await client.updateCount()
         XCTAssertEqual(updateCount, 0)
+    }
+
+    func testAncestorFolderMovedOutsideVaultIsRejectedBeforeUpdate() async {
+        let openedRevision = revision("1")
+        let movedFolder = DriveItem(
+            id: "nested",
+            name: "Nested",
+            kind: .folder,
+            parentIDs: ["outside"]
+        )
+        let client = FakeDriveWriteClient(
+            metadataResult: .success(
+                metadata(revision: openedRevision, parentIDs: ["nested"])
+            ),
+            updateResult: .failure(.networkFailure),
+            itemResults: ["nested": .success(movedFolder)]
+        )
+        let saver = VaultDocumentSaver(driveWriteClient: client)
+        var document = makeDocument(revision: openedRevision)
+        document.updateText("stay inside the Vault")
+
+        do {
+            _ = try await saver.save(document: document, in: makeNestedTree())
+            XCTFail("Expected moved ancestor to violate the Vault boundary")
+        } catch {
+            XCTAssertEqual(error as? DocumentSaveError, .vaultBoundaryViolation)
+        }
+
+        XCTAssertTrue(document.isDirty)
+        let updateCount = await client.updateCount()
+        XCTAssertEqual(updateCount, 0)
+    }
+
+    func testConflictCopyRejectsParentWhoseAncestorMovedOutsideVault() async {
+        let movedFolder = DriveItem(
+            id: "nested",
+            name: "Nested",
+            kind: .folder,
+            parentIDs: ["outside"]
+        )
+        let client = FakeDriveWriteClient(
+            metadataResult: .success(
+                metadata(revision: revision("2"), parentIDs: ["nested"])
+            ),
+            updateResult: .failure(.networkFailure),
+            itemResults: ["nested": .success(movedFolder)]
+        )
+        let saver = VaultDocumentSaver(driveWriteClient: client)
+        var document = makeDocument(revision: revision("1"))
+        document.updateText("local conflict text")
+
+        do {
+            _ = try await saver.saveCopy(
+                document: document,
+                name: "note (Conflict Copy).md",
+                in: makeNestedTree()
+            )
+            XCTFail("Expected moved ancestor to prevent copy creation")
+        } catch {
+            XCTAssertEqual(error as? DocumentSaveError, .vaultBoundaryViolation)
+        }
+
+        let creationCount = await client.creationCount()
+        XCTAssertEqual(creationCount, 0)
+    }
+
+    func testAuthenticationRequiredMetadataMapsToReauthentication() async {
+        let client = FakeDriveWriteClient(
+            metadataResult: .failure(.authenticationRequired),
+            updateResult: .failure(.networkFailure)
+        )
+        let saver = VaultDocumentSaver(driveWriteClient: client)
+        var document = makeDocument(revision: revision("1"))
+        document.updateText("retain during reauthentication")
+
+        do {
+            _ = try await saver.save(document: document, in: makeTree())
+            XCTFail("Expected reauthentication requirement")
+        } catch {
+            XCTAssertEqual(
+                error as? DocumentSaveError,
+                .authentication(.reauthenticationRequired)
+            )
+        }
+
+        XCTAssertTrue(document.isDirty)
     }
 
     func testCleanDocumentDoesNotAccessDrive() async throws {
@@ -196,10 +282,10 @@ final class VaultDocumentSaverTests: XCTestCase {
         XCTAssertEqual(updates[0].data, Data("intentional overwrite".utf8))
     }
 
-    func testExplicitOverwriteNetworkFailureRemainsDirtyAndIsNotRetried() async {
+    func testExplicitOverwriteUnknownStatusRemainsDirtyAndIsNotRetried() async {
         let client = FakeDriveWriteClient(
             metadataResult: .success(metadata(revision: revision("2"))),
-            updateResult: .failure(.networkFailure)
+            updateResult: .failure(.writeStatusUnknown)
         )
         let saver = VaultDocumentSaver(driveWriteClient: client)
         var document = makeDocument(revision: revision("1"))
@@ -216,6 +302,32 @@ final class VaultDocumentSaverTests: XCTestCase {
         XCTAssertEqual(document.text, "retain overwrite text")
         let updateCount = await client.updateCount()
         XCTAssertEqual(updateCount, 1)
+    }
+
+    func testConflictCopyUnknownStatusRemainsDirtyAndIsNotRetried() async {
+        let client = FakeDriveWriteClient(
+            metadataResult: .success(metadata(revision: revision("2"))),
+            updateResult: .failure(.networkFailure),
+            createResult: .failure(.writeStatusUnknown)
+        )
+        let saver = VaultDocumentSaver(driveWriteClient: client)
+        var document = makeDocument(revision: revision("1"))
+        document.updateText("retain copy text")
+
+        do {
+            _ = try await saver.saveCopy(
+                document: document,
+                name: "note (Conflict Copy).md",
+                in: makeTree()
+            )
+            XCTFail("Expected unknown create status")
+        } catch {
+            XCTAssertEqual(error as? DocumentSaveError, .updateStatusUnknown)
+        }
+
+        XCTAssertTrue(document.isDirty)
+        let creationCount = await client.creationCount()
+        XCTAssertEqual(creationCount, 1)
     }
 
     private func makeDocument(revision: DriveFileRevision) -> MarkdownDocument {
@@ -239,6 +351,34 @@ final class VaultDocumentSaverTests: XCTestCase {
                             kind: .file,
                             parentIDs: ["vault"]
                         )
+                    )
+                ]
+            )
+        )
+    }
+
+    private func makeNestedTree() -> VaultTree {
+        VaultTree(
+            root: DriveTreeNode(
+                item: DriveItem(id: "vault", name: "Vault", kind: .folder),
+                children: [
+                    DriveTreeNode(
+                        item: DriveItem(
+                            id: "nested",
+                            name: "Nested",
+                            kind: .folder,
+                            parentIDs: ["vault"]
+                        ),
+                        children: [
+                            DriveTreeNode(
+                                item: DriveItem(
+                                    id: "note",
+                                    name: "note.md",
+                                    kind: .file,
+                                    parentIDs: ["nested"]
+                                )
+                            )
+                        ]
                     )
                 ]
             )
@@ -285,6 +425,7 @@ private actor FakeDriveWriteClient: DriveWriteClient {
     private let metadataResult: Result<DriveFileMetadata, DriveError>
     private let updateResult: Result<DriveFileMetadata, DriveError>
     private let createResult: Result<DriveFileMetadata, DriveError>
+    private let itemResults: [String: Result<DriveItem, DriveError>]
     private var metadataRequests = 0
     private(set) var updates: [Update] = []
     private(set) var creations: [Creation] = []
@@ -292,11 +433,17 @@ private actor FakeDriveWriteClient: DriveWriteClient {
     init(
         metadataResult: Result<DriveFileMetadata, DriveError>,
         updateResult: Result<DriveFileMetadata, DriveError>,
-        createResult: Result<DriveFileMetadata, DriveError> = .failure(.networkFailure)
+        createResult: Result<DriveFileMetadata, DriveError> = .failure(.networkFailure),
+        itemResults: [String: Result<DriveItem, DriveError>] = [:]
     ) {
         self.metadataResult = metadataResult
         self.updateResult = updateResult
         self.createResult = createResult
+        self.itemResults = itemResults
+    }
+
+    func getItem(id: String) async throws -> DriveItem {
+        try itemResults[id, default: .failure(.itemNotFound)].get()
     }
 
     func getFileMetadata(id: String) async throws -> DriveFileMetadata {
@@ -331,5 +478,9 @@ private actor FakeDriveWriteClient: DriveWriteClient {
 
     func updateCount() -> Int {
         updates.count
+    }
+
+    func creationCount() -> Int {
+        creations.count
     }
 }
