@@ -48,6 +48,60 @@ public actor VaultDocumentSaver {
         return savedDocument
     }
 
+    public func saveCopy(
+        document: MarkdownDocument,
+        name: String,
+        in tree: VaultTree
+    ) async throws -> MarkdownDocument {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty,
+            !trimmedName.contains("/"),
+            MarkdownFileRules.isMarkdownFile(name: trimmedName),
+            tree.markdownFile(id: document.fileID) != nil
+        else {
+            throw DocumentSaveError.invalidCopyName
+        }
+
+        let remoteMetadata: DriveFileMetadata
+        do {
+            remoteMetadata = try await driveWriteClient.getFileMetadata(id: document.fileID)
+        } catch {
+            throw Self.preflightError(from: error)
+        }
+        try validate(metadata: remoteMetadata, document: document, tree: tree)
+        guard let parentID = remoteMetadata.item.parentIDs.first(where: tree.containsFolder(id:)) else {
+            throw DocumentSaveError.vaultBoundaryViolation
+        }
+
+        let copyMetadata: DriveFileMetadata
+        do {
+            copyMetadata = try await driveWriteClient.createFile(
+                name: trimmedName,
+                parentID: parentID,
+                data: Data(document.text.utf8),
+                mimeType: "text/markdown; charset=utf-8"
+            )
+        } catch DriveError.networkFailure {
+            throw DocumentSaveError.updateStatusUnknown
+        } catch {
+            throw Self.updateError(from: error)
+        }
+        guard copyMetadata.item.id != document.fileID,
+            copyMetadata.item.kind == .file,
+            copyMetadata.item.name == trimmedName,
+            copyMetadata.item.parentIDs.contains(parentID)
+        else {
+            throw DocumentSaveError.vaultBoundaryViolation
+        }
+
+        return MarkdownDocument(
+            fileID: copyMetadata.item.id,
+            name: copyMetadata.item.name,
+            text: document.text,
+            remoteRevision: copyMetadata.revision
+        )
+    }
+
     private func validate(
         metadata: DriveFileMetadata,
         document: MarkdownDocument,

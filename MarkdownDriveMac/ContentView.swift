@@ -166,6 +166,11 @@ private struct VaultPlaceholderView: View {
                     await appModel.reloadRemoteDocumentAfterConflict()
                 }
             }
+            Button("Save a Copy") {
+                Task {
+                    await appModel.saveConflictCopy()
+                }
+            }
         } message: {
             Text(
                 "This file was changed on another device. Reloading will discard the unsaved text currently in the editor."

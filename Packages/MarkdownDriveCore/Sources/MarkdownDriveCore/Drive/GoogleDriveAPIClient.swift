@@ -85,6 +85,40 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
         return try updatedFile.metadata
     }
 
+    public func createFile(
+        name: String,
+        parentID: String,
+        data: Data,
+        mimeType: String
+    ) async throws -> DriveFileMetadata {
+        let boundary = "MarkdownDrive-\(UUID().uuidString)"
+        let url = uploadBaseURL.appendingPathComponent("files")
+        var request = try await authorizedRequest(
+            url: url,
+            queryItems: [
+                URLQueryItem(name: "uploadType", value: "multipart"),
+                URLQueryItem(name: "supportsAllDrives", value: "true"),
+                URLQueryItem(name: "fields", value: Self.fileFields),
+            ]
+        )
+        request.httpMethod = "POST"
+        request.httpBody = try multipartBody(
+            name: name,
+            parentID: parentID,
+            data: data,
+            mimeType: mimeType,
+            boundary: boundary
+        )
+        request.setValue(
+            "multipart/related; boundary=\(boundary)",
+            forHTTPHeaderField: "Content-Type"
+        )
+
+        let createdFile = try decodeFile(from: await perform(request))
+        try validateModification(createdFile)
+        return try createdFile.metadata
+    }
+
     public func listChildren(of folderID: String) async throws -> [DriveItem] {
         var items: [DriveItem] = []
         var pageToken: String?
@@ -166,6 +200,32 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
         guard file.capabilities?.canModifyContent != false else {
             throw DriveError.modificationNotAllowed
         }
+    }
+
+    private func multipartBody(
+        name: String,
+        parentID: String,
+        data: Data,
+        mimeType: String,
+        boundary: String
+    ) throws -> Data {
+        let metadata = GoogleDriveCreateFileMetadata(name: name, parents: [parentID])
+        let metadataData: Data
+        do {
+            metadataData = try JSONEncoder().encode(metadata)
+        } catch {
+            throw DriveError.invalidResponse
+        }
+
+        var body = Data()
+        body.append(Data("--\(boundary)\r\n".utf8))
+        body.append(Data("Content-Type: application/json; charset=UTF-8\r\n\r\n".utf8))
+        body.append(metadataData)
+        body.append(Data("\r\n--\(boundary)\r\n".utf8))
+        body.append(Data("Content-Type: \(mimeType)\r\n\r\n".utf8))
+        body.append(data)
+        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+        return body
     }
 
     private func authorizedRequest(
@@ -269,6 +329,11 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
 
 private struct GoogleDriveErrorEnvelope: Decodable {
     let error: GoogleDriveErrorDetails
+}
+
+private struct GoogleDriveCreateFileMetadata: Encodable {
+    let name: String
+    let parents: [String]
 }
 
 private struct GoogleDriveErrorDetails: Decodable {

@@ -4,6 +4,7 @@ public enum DocumentSaveError: Error, Equatable, Sendable {
     case authentication(AuthenticationError)
     case conflict(remoteRevision: DriveFileRevision)
     case drive(DriveError)
+    case invalidCopyName
     case remoteDeleted
     case unexpected
     case updateStatusUnknown
@@ -19,6 +20,8 @@ extension DocumentSaveError: LocalizedError {
             "Remote changes were detected. Your local edits were not saved."
         case .drive(let error):
             error.localizedDescription
+        case .invalidCopyName:
+            "Choose a valid Markdown filename for the conflict copy."
         case .remoteDeleted:
             "The file was deleted from Google Drive. Your local edits are still available."
         case .unexpected:

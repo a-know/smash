@@ -138,6 +138,44 @@ final class VaultDocumentSaverTests: XCTestCase {
         XCTAssertEqual(updateCount, 0)
     }
 
+    func testSavesConflictCopyBesideOriginalWithoutUpdatingOriginal() async throws {
+        let openedRevision = revision("1")
+        let copyRevision = revision("3")
+        let copyMetadata = DriveFileMetadata(
+            item: DriveItem(
+                id: "copy",
+                name: "note (Conflict Copy).md",
+                kind: .file,
+                parentIDs: ["vault"]
+            ),
+            revision: copyRevision
+        )
+        let client = FakeDriveWriteClient(
+            metadataResult: .success(metadata(revision: revision("2"))),
+            updateResult: .failure(.networkFailure),
+            createResult: .success(copyMetadata)
+        )
+        let saver = VaultDocumentSaver(driveWriteClient: client)
+        var document = makeDocument(revision: openedRevision)
+        document.updateText("local conflict text")
+
+        let copy = try await saver.saveCopy(
+            document: document,
+            name: "note (Conflict Copy).md",
+            in: makeTree()
+        )
+
+        XCTAssertEqual(copy.fileID, "copy")
+        XCTAssertEqual(copy.text, "local conflict text")
+        XCTAssertFalse(copy.isDirty)
+        let updateCount = await client.updateCount()
+        XCTAssertEqual(updateCount, 0)
+        let creations = await client.creations
+        XCTAssertEqual(creations.count, 1)
+        XCTAssertEqual(creations[0].parentID, "vault")
+        XCTAssertEqual(creations[0].data, Data("local conflict text".utf8))
+    }
+
     private func makeDocument(revision: DriveFileRevision) -> MarkdownDocument {
         MarkdownDocument(
             fileID: "note",
@@ -195,17 +233,28 @@ private actor FakeDriveWriteClient: DriveWriteClient {
         let mimeType: String
     }
 
+    struct Creation: Equatable, Sendable {
+        let name: String
+        let parentID: String
+        let data: Data
+        let mimeType: String
+    }
+
     private let metadataResult: Result<DriveFileMetadata, DriveError>
     private let updateResult: Result<DriveFileMetadata, DriveError>
+    private let createResult: Result<DriveFileMetadata, DriveError>
     private var metadataRequests = 0
     private(set) var updates: [Update] = []
+    private(set) var creations: [Creation] = []
 
     init(
         metadataResult: Result<DriveFileMetadata, DriveError>,
-        updateResult: Result<DriveFileMetadata, DriveError>
+        updateResult: Result<DriveFileMetadata, DriveError>,
+        createResult: Result<DriveFileMetadata, DriveError> = .failure(.networkFailure)
     ) {
         self.metadataResult = metadataResult
         self.updateResult = updateResult
+        self.createResult = createResult
     }
 
     func getFileMetadata(id: String) async throws -> DriveFileMetadata {
@@ -220,6 +269,18 @@ private actor FakeDriveWriteClient: DriveWriteClient {
     ) async throws -> DriveFileMetadata {
         updates.append(Update(id: id, data: data, mimeType: mimeType))
         return try updateResult.get()
+    }
+
+    func createFile(
+        name: String,
+        parentID: String,
+        data: Data,
+        mimeType: String
+    ) async throws -> DriveFileMetadata {
+        creations.append(
+            Creation(name: name, parentID: parentID, data: data, mimeType: mimeType)
+        )
+        return try createResult.get()
     }
 
     func metadataRequestCount() -> Int {

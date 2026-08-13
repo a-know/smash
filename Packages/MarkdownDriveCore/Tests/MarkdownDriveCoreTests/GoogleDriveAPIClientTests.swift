@@ -249,6 +249,40 @@ final class GoogleDriveAPIClientTests: XCTestCase {
         }
     }
 
+    func testCreatesConflictCopyWithMultipartUploadInRequestedParent() async throws {
+        let createdMetadata = fileMetadata(
+            id: "copy-1",
+            name: "memo (Conflict Copy).md",
+            parentIDs: ["vault"],
+            version: "1"
+        )
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(statusCode: 200, body: createdMetadata)
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        let metadata = try await client.createFile(
+            name: "memo (Conflict Copy).md",
+            parentID: "vault",
+            data: Data("local text".utf8),
+            mimeType: "text/markdown; charset=utf-8"
+        )
+
+        XCTAssertEqual(metadata.item.id, "copy-1")
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests[0].httpMethod, "POST")
+        XCTAssertEqual(requests[0].url?.path, "/upload/drive/v3/files")
+        XCTAssertEqual(queryValue(named: "uploadType", in: requests[0]), "multipart")
+        let body = String(decoding: requests[0].httpBody ?? Data(), as: UTF8.self)
+        XCTAssertTrue(body.contains(#""name":"memo (Conflict Copy).md""#))
+        XCTAssertTrue(body.contains(#""parents":["vault"]"#))
+        XCTAssertTrue(body.contains("local text"))
+    }
+
     func testListChildrenClassifies403RateLimitReason() async {
         let transport = FakeDriveHTTPTransport(responses: [
             .success(
@@ -325,16 +359,19 @@ final class GoogleDriveAPIClientTests: XCTestCase {
     }
 
     private func fileMetadata(
+        id: String = "file-1",
+        name: String = "memo.md",
+        parentIDs: [String] = ["vault-root"],
         version: String,
         canDownload: Bool = true,
         canModifyContent: Bool = true
     ) -> String {
         """
         {
-          "id": "file-1",
-          "name": "memo.md",
+          "id": "\(id)",
+          "name": "\(name)",
           "mimeType": "text/markdown",
-          "parents": ["vault-root"],
+          "parents": \(jsonArray(parentIDs)),
           "trashed": false,
           "modifiedTime": "2026-08-12T12:34:56Z",
           "version": "\(version)",
@@ -344,6 +381,11 @@ final class GoogleDriveAPIClientTests: XCTestCase {
           }
         }
         """
+    }
+
+    private func jsonArray(_ strings: [String]) -> String {
+        let data = try! JSONEncoder().encode(strings)
+        return String(decoding: data, as: UTF8.self)
     }
 }
 

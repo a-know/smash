@@ -326,6 +326,44 @@ final class AppModel: ObservableObject {
         await loadDocument(fileID: document.fileID, from: tree)
     }
 
+    func saveConflictCopy() async {
+        guard case .loaded(let document) = documentState,
+            case .loaded(let tree) = vaultTreeState
+        else {
+            dismissConflictAlert()
+            return
+        }
+
+        let documentBeingCopied = document
+        isConflictAlertPresented = false
+        documentSaveState = .saving
+        do {
+            let copy = try await vaultDocumentSaver.saveCopy(
+                document: documentBeingCopied,
+                name: Self.conflictCopyName(for: documentBeingCopied.name),
+                in: tree
+            )
+            guard case .loaded(let currentDocument) = documentState,
+                currentDocument.fileID == documentBeingCopied.fileID
+            else {
+                return
+            }
+
+            if currentDocument.text == documentBeingCopied.text {
+                documentState = .loaded(copy)
+                selectedTreeItemID = copy.fileID
+                documentSaveState = .saved
+            } else {
+                documentSaveState = .idle
+            }
+            await loadVaultTree()
+        } catch let error as DocumentSaveError {
+            handleSaveError(error, fileID: documentBeingCopied.fileID)
+        } catch {
+            handleSaveError(.unexpected, fileID: documentBeingCopied.fileID)
+        }
+    }
+
     func dismissSaveErrorAlert() {
         isSaveErrorAlertPresented = false
     }
@@ -351,6 +389,12 @@ final class AppModel: ObservableObject {
             documentSaveState = .failed(error.localizedDescription)
             isSaveErrorAlertPresented = true
         }
+    }
+
+    private static func conflictCopyName(for originalName: String) -> String {
+        let baseName = (originalName as NSString).deletingPathExtension
+        let suffix = UUID().uuidString.prefix(8)
+        return "\(baseName) (Conflict Copy \(suffix)).md"
     }
 
     private func loadDocument(fileID: String, from tree: VaultTree) async {
@@ -381,7 +425,6 @@ final class AppModel: ObservableObject {
         pendingDocumentFileID = nil
         isDiscardConfirmationPresented = false
         isConflictAlertPresented = false
-        isSaveErrorAlertPresented = false
         isSaveErrorAlertPresented = false
     }
 }
