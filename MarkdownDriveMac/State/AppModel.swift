@@ -29,6 +29,7 @@ enum DocumentSaveState: Equatable {
     case saved
     case failed(String)
     case conflict
+    case reloadFailed(String)
     case statusUnknown(String)
 }
 
@@ -266,7 +267,7 @@ final class AppModel: ObservableObject {
         document.updateText(text)
         documentState = .loaded(document)
         switch documentSaveState {
-        case .saved, .failed, .conflict, .statusUnknown:
+        case .saved, .failed, .conflict, .reloadFailed, .statusUnknown:
             documentSaveState = .idle
         case .idle, .saving:
             break
@@ -321,9 +322,55 @@ final class AppModel: ObservableObject {
             dismissConflictAlert()
             return
         }
+        let documentBeingReloaded = document
         isConflictAlertPresented = false
-        documentSaveState = .idle
-        await loadDocument(fileID: document.fileID, from: tree)
+        documentSaveState = .conflict
+
+        do {
+            let remoteDocument = try await vaultDocumentLoader.load(
+                fileID: documentBeingReloaded.fileID,
+                from: tree
+            )
+            guard case .loaded(let currentDocument) = documentState,
+                currentDocument.fileID == documentBeingReloaded.fileID
+            else {
+                return
+            }
+            guard currentDocument == documentBeingReloaded else {
+                handleReloadError(
+                    message:
+                        "The remote version was not applied because the document changed while it was loading. Your local edits are still available.",
+                    fileID: documentBeingReloaded.fileID
+                )
+                return
+            }
+
+            documentState = .loaded(remoteDocument)
+            selectedTreeItemID = remoteDocument.fileID
+            documentSaveState = .idle
+        } catch let error as AuthenticationError {
+            handleReloadError(
+                message:
+                    "The remote version could not be loaded. \(error.localizedDescription) Your local edits are still available.",
+                fileID: documentBeingReloaded.fileID,
+                authenticationError: error
+            )
+        } catch let error as DriveError {
+            let authenticationError: AuthenticationError? =
+                error == .authenticationRequired ? .reauthenticationRequired : nil
+            handleReloadError(
+                message:
+                    "The remote version could not be loaded. \(error.localizedDescription) Your local edits are still available.",
+                fileID: documentBeingReloaded.fileID,
+                authenticationError: authenticationError
+            )
+        } catch {
+            handleReloadError(
+                message:
+                    "The remote version could not be loaded. Your local edits are still available.",
+                fileID: documentBeingReloaded.fileID
+            )
+        }
     }
 
     func saveConflictCopy() async {
@@ -426,6 +473,24 @@ final class AppModel: ObservableObject {
         default:
             documentSaveState = .failed(error.localizedDescription)
             isSaveErrorAlertPresented = true
+        }
+    }
+
+    private func handleReloadError(
+        message: String,
+        fileID: String,
+        authenticationError: AuthenticationError? = nil
+    ) {
+        guard case .loaded(let currentDocument) = documentState,
+            currentDocument.fileID == fileID
+        else {
+            return
+        }
+
+        documentSaveState = .reloadFailed(message)
+        isSaveErrorAlertPresented = true
+        if let authenticationError {
+            authenticationState = .failed(authenticationError)
         }
     }
 

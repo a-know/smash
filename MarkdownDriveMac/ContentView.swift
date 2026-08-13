@@ -204,7 +204,7 @@ private struct VaultPlaceholderView: View {
 
     private var saveErrorMessage: String {
         switch appModel.documentSaveState {
-        case .failed(let message), .statusUnknown(let message):
+        case .failed(let message), .reloadFailed(let message), .statusUnknown(let message):
             message
         default:
             "The document could not be saved. Your local edits are still available."
@@ -212,6 +212,9 @@ private struct VaultPlaceholderView: View {
     }
 
     private var saveAlertTitle: String {
+        if case .reloadFailed = appModel.documentSaveState {
+            return "Reload Failed"
+        }
         if case .statusUnknown = appModel.documentSaveState {
             return "Save Status Unknown"
         }
@@ -447,6 +450,8 @@ private struct MarkdownEditorDetail: View {
             "Save failed"
         case .conflict:
             "Remote changes detected"
+        case .reloadFailed:
+            "Reload failed"
         case .statusUnknown:
             "Save status unknown"
         case .idle, .saved:
@@ -458,7 +463,7 @@ private struct MarkdownEditorDetail: View {
         switch appModel.documentSaveState {
         case .saving:
             "arrow.trianglehead.2.clockwise.rotate.90"
-        case .failed, .statusUnknown:
+        case .failed, .reloadFailed, .statusUnknown:
             "exclamationmark.triangle.fill"
         case .conflict:
             "arrow.trianglehead.branch"
@@ -469,7 +474,7 @@ private struct MarkdownEditorDetail: View {
 
     private var saveStatusColor: Color {
         switch appModel.documentSaveState {
-        case .failed, .conflict, .statusUnknown:
+        case .failed, .conflict, .reloadFailed, .statusUnknown:
             .orange
         case .idle, .saving, .saved:
             .secondary
