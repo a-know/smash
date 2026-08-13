@@ -13,7 +13,7 @@ struct KeychainRefreshTokenStore: RefreshTokenStore {
     private let account: String
 
     init(
-        service: String = "com.a-know.MarkdownDrive.oauth",
+        service: String = "com.a-know.MarkdownDrive.oauth.v2",
         account: String = "google-refresh-token"
     ) {
         self.service = service
