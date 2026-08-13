@@ -170,46 +170,12 @@ public actor VaultDocumentSaver {
             throw DocumentSaveError.vaultBoundaryViolation
         }
 
-        let vaultRootID = tree.root.item.id
-        for parentID in metadata.item.parentIDs {
-            if try await hasCurrentPathToVaultRoot(
-                from: parentID,
-                vaultRootID: vaultRootID
-            ) {
-                return parentID
-            }
+        do {
+            return try await VaultBoundaryValidator(driveItemClient: driveWriteClient)
+                .currentParentID(of: metadata.item, in: tree)
+        } catch {
+            throw Self.membershipError(from: error)
         }
-        throw DocumentSaveError.vaultBoundaryViolation
-    }
-
-    private func hasCurrentPathToVaultRoot(
-        from startingFolderID: String,
-        vaultRootID: String
-    ) async throws -> Bool {
-        var pendingFolderIDs = [startingFolderID]
-        var visitedFolderIDs: Set<String> = []
-
-        while let folderID = pendingFolderIDs.popLast() {
-            if folderID == vaultRootID {
-                return true
-            }
-            guard visitedFolderIDs.insert(folderID).inserted else {
-                continue
-            }
-
-            let folder: DriveItem
-            do {
-                folder = try await driveWriteClient.getItem(id: folderID)
-            } catch {
-                throw Self.membershipError(from: error)
-            }
-            guard folder.kind == .folder, !folder.isTrashed else {
-                continue
-            }
-            pendingFolderIDs.append(contentsOf: folder.parentIDs)
-        }
-
-        return false
     }
 
     private func validateWriteResponse(
@@ -263,7 +229,7 @@ public actor VaultDocumentSaver {
         if driveError == .authenticationRequired {
             return .authentication(.reauthenticationRequired)
         }
-        if driveError == .itemNotFound {
+        if driveError == .itemNotFound || driveError == .vaultBoundaryViolation {
             return .vaultBoundaryViolation
         }
         return .drive(driveError)

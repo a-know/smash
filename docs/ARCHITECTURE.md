@@ -48,8 +48,9 @@ AppKit types do not cross into `MarkdownDriveCore`.
 2. The selected Vault ID is restored from UserDefaults.
 3. `VaultTreeLoader` starts at that ID and recursively lists descendants, following every Drive API
    page. Only folders and Markdown files are exposed to the application UI.
-4. Selecting a file verifies that its ID belongs to the loaded Vault tree, checks its current Drive
-   parent and capabilities, and downloads its UTF-8 bytes.
+4. Selecting or reloading a file verifies that its ID belongs to the loaded Vault tree, downloads its
+   UTF-8 bytes, and revalidates its current Drive ancestor chain back to the Vault root before the
+   editor accepts the result.
 5. The editor holds a `MarkdownDocument` containing the current text, last-saved text, and the Drive
    revision observed during the stable download.
 6. Saving verifies the Vault boundary and remote revision again before updating the same Drive file

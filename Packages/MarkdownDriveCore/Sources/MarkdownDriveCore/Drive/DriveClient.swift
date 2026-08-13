@@ -1,16 +1,18 @@
 import Foundation
 
-public protocol DriveClient: Sendable {
+public protocol DriveItemClient: Sendable {
     func getItem(id: String) async throws -> DriveItem
+}
+
+public protocol DriveClient: DriveItemClient {
     func listChildren(of folderID: String) async throws -> [DriveItem]
 }
 
-public protocol DriveContentClient: Sendable {
+public protocol DriveContentClient: DriveItemClient {
     func downloadFile(id: String) async throws -> DriveFileDownload
 }
 
-public protocol DriveWriteClient: Sendable {
-    func getItem(id: String) async throws -> DriveItem
+public protocol DriveWriteClient: DriveItemClient {
     func getFileMetadata(id: String) async throws -> DriveFileMetadata
     func updateFileContent(id: String, data: Data, mimeType: String) async throws -> DriveFileMetadata
     func createFile(
