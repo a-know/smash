@@ -174,6 +174,10 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1640;
 				TargetAttributes = {
+					921E50CBCC08FE0E276B5F5C = {
+						DevelopmentTeam = U2LZVLHC3C;
+						ProvisioningStyle = Automatic;
+					};
 				};
 			};
 			buildConfigurationList = FC240CC9E2FE7B976A1978C1 /* Build configuration list for PBXProject "MarkdownDrive" */;
@@ -285,8 +289,10 @@
 			baseConfigurationReference = 4B72804D237119F26A109EA4 /* OAuth.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = U2LZVLHC3C;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "Config/MarkdownDriveMac-Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -304,8 +310,10 @@
 			baseConfigurationReference = 4B72804D237119F26A109EA4 /* OAuth.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = U2LZVLHC3C;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "Config/MarkdownDriveMac-Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (

@@ -120,6 +120,13 @@ to prevent impersonation of a native app.
 Do not commit the local xcconfig, refresh tokens, access tokens, exported Keychain data, or downloaded
 OAuth client JSON. Never print either OAuth credential in build or application logs.
 
+The macOS target uses the repository owner's Apple Development team for a stable development code
+signature. This is important for Keychain access: an ad-hoc signature can make macOS treat each build
+as different code and repeatedly request access to the stored refresh token. A contributor using a
+different team should select their own Team under **Signing & Capabilities**. After changing from an
+ad-hoc signature, macOS may request access to the existing Keychain item once; choose **Always Allow**
+for the signed development build.
+
 For an External consent screen whose publishing status is **Testing**, Google limits refresh tokens involving the Drive scope to seven days. Reauthentication after that interval is expected during development; it does not indicate a Keychain or refresh implementation failure. See [Google's refresh token expiration rules](https://developers.google.com/identity/protocols/oauth2#expiration).
 
 ## Publication and verification

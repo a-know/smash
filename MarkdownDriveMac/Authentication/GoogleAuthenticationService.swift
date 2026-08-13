@@ -7,6 +7,7 @@ actor GoogleAuthenticationService: AuthenticationService {
     private let refreshTokenStore: any RefreshTokenStore
 
     private var currentAccessCredential: AccessCredential?
+    private var currentRefreshToken: String?
 
     init(
         authorizationFlow: GoogleOAuthAuthorizationFlow = GoogleOAuthAuthorizationFlow(),
@@ -22,10 +23,12 @@ actor GoogleAuthenticationService: AuthenticationService {
         guard let refreshToken = try refreshTokenStore.load() else {
             return nil
         }
+        currentRefreshToken = refreshToken
 
         do {
             return try await refreshSession(using: refreshToken)
         } catch AuthenticationError.reauthenticationRequired {
+            currentRefreshToken = nil
             try refreshTokenStore.remove()
             throw AuthenticationError.reauthenticationRequired
         }
@@ -47,6 +50,7 @@ actor GoogleAuthenticationService: AuthenticationService {
 
         do {
             try refreshTokenStore.save(refreshToken)
+            currentRefreshToken = refreshToken
         } catch {
             await tokenClient.revoke(refreshToken)
             throw error
@@ -56,8 +60,9 @@ actor GoogleAuthenticationService: AuthenticationService {
     }
 
     func signOut() async throws {
-        let refreshToken = try refreshTokenStore.load()
+        let refreshToken = try currentRefreshToken ?? refreshTokenStore.load()
         currentAccessCredential = nil
+        currentRefreshToken = nil
         try refreshTokenStore.remove()
 
         if let refreshToken {
@@ -72,9 +77,11 @@ actor GoogleAuthenticationService: AuthenticationService {
             return currentAccessCredential.accessToken
         }
 
-        guard let refreshToken = try refreshTokenStore.load() else {
+        let refreshToken = try currentRefreshToken ?? refreshTokenStore.load()
+        guard let refreshToken else {
             throw AuthenticationError.reauthenticationRequired
         }
+        currentRefreshToken = refreshToken
 
         do {
             _ = try await refreshSession(using: refreshToken)
@@ -84,6 +91,7 @@ actor GoogleAuthenticationService: AuthenticationService {
             return currentAccessCredential.accessToken
         } catch AuthenticationError.reauthenticationRequired {
             currentAccessCredential = nil
+            currentRefreshToken = nil
             try refreshTokenStore.remove()
             throw AuthenticationError.reauthenticationRequired
         }
@@ -98,6 +106,7 @@ actor GoogleAuthenticationService: AuthenticationService {
 
         if let rotatedRefreshToken = response.refreshToken, !rotatedRefreshToken.isEmpty {
             try refreshTokenStore.save(rotatedRefreshToken)
+            currentRefreshToken = rotatedRefreshToken
         }
 
         return try updateCurrentCredential(from: response)

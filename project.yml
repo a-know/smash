@@ -30,7 +30,9 @@ targets:
       - package: MarkdownDriveCore
     settings:
       base:
+        CODE_SIGN_STYLE: Automatic
         CURRENT_PROJECT_VERSION: 1
+        DEVELOPMENT_TEAM: U2LZVLHC3C
         GENERATE_INFOPLIST_FILE: false
         INFOPLIST_FILE: Config/MarkdownDriveMac-Info.plist
         MARKETING_VERSION: 0.1.0
