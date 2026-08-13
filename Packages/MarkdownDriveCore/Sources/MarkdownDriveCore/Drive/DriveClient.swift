@@ -9,6 +9,11 @@ public protocol DriveContentClient: Sendable {
     func downloadFile(id: String) async throws -> DriveFileDownload
 }
 
+public protocol DriveWriteClient: Sendable {
+    func getFileMetadata(id: String) async throws -> DriveFileMetadata
+    func updateFileContent(id: String, data: Data, mimeType: String) async throws -> DriveFileMetadata
+}
+
 public struct DriveFileRevision: Equatable, Sendable {
     public let version: String
     public let modifiedTime: Date
@@ -27,6 +32,16 @@ public struct DriveFileDownload: Equatable, Sendable {
     public init(item: DriveItem, data: Data, revision: DriveFileRevision) {
         self.item = item
         self.data = data
+        self.revision = revision
+    }
+}
+
+public struct DriveFileMetadata: Equatable, Sendable {
+    public let item: DriveItem
+    public let revision: DriveFileRevision
+
+    public init(item: DriveItem, revision: DriveFileRevision) {
+        self.item = item
         self.revision = revision
     }
 }
