@@ -20,6 +20,7 @@ struct MarkdownDriveApp: App {
         .defaultSize(width: 1_000, height: 700)
         .commands {
             MarkdownEditorCommands()
+            MarkdownDocumentCommands(appModel: appModel)
         }
     }
 }

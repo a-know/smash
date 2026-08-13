@@ -47,6 +47,25 @@ final class VaultDocumentLoaderTests: XCTestCase {
         XCTAssertFalse(document.isDirty)
     }
 
+    func testDocumentCanRecordSavedSnapshotWhileNewerEditsRemainDirty() {
+        let initialRevision = makeRevision()
+        var document = MarkdownDocument(
+            fileID: "note",
+            name: "note.md",
+            text: "original",
+            remoteRevision: initialRevision
+        )
+        document.updateText("text sent to Drive")
+        document.updateText("newer local edits")
+        let savedRevision = DriveFileRevision(version: "2", modifiedTime: Date())
+
+        document.recordSavedText("text sent to Drive", revision: savedRevision)
+
+        XCTAssertEqual(document.text, "newer local edits")
+        XCTAssertEqual(document.remoteRevision, savedRevision)
+        XCTAssertTrue(document.isDirty)
+    }
+
     func testRejectsArbitraryFileIDBeforeDownloading() async {
         let client = FakeDriveContentClient(result: .failure(.itemNotFound))
         let loader = VaultDocumentLoader(driveContentClient: client)

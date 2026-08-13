@@ -18,6 +18,7 @@
 		B71BCCE314A8B389DB6E7F61 /* NativeMarkdownEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8614F525C4E1EE5FD88C789 /* NativeMarkdownEditor.swift */; };
 		D065247233EB56FB1269FA7E /* MarkdownDriveApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA1480E42F5C96887C029E9A /* MarkdownDriveApp.swift */; };
 		D1B8E18B04D6742174A6C12C /* GoogleAuthenticationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 225E67B0E375CB5DE2EFEE45 /* GoogleAuthenticationService.swift */; };
+		F213C7FBBA5C6291E2BDFE1D /* MarkdownDocumentCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0947A40A52F9EE928CA25EB /* MarkdownDocumentCommands.swift */; };
 		F756B8F5959CD0022D11D57F /* KeychainRefreshTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3112A29460243053F89B0B6C /* KeychainRefreshTokenStore.swift */; };
 		FC4DD604144803F975D764E0 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E6F8BC93D7DE21E834DA88E /* AppModel.swift */; };
 		FDC16AAA154FE5841DEA0EE0 /* OAuthLoopbackServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76CE2CE1C3DAFADDCAE6C8F2 /* OAuthLoopbackServer.swift */; };
@@ -38,6 +39,7 @@
 		A98FCCAE58506021D3CBC793 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		B81B4AEC2433411CDB958D5B /* UserDefaultsVaultStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserDefaultsVaultStore.swift; sourceTree = "<group>"; };
 		C33B265F40B3EFA6CF7D3A67 /* AppDependencies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDependencies.swift; sourceTree = "<group>"; };
+		E0947A40A52F9EE928CA25EB /* MarkdownDocumentCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownDocumentCommands.swift; sourceTree = "<group>"; };
 		EA1480E42F5C96887C029E9A /* MarkdownDriveApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownDriveApp.swift; sourceTree = "<group>"; };
 		F8614F525C4E1EE5FD88C789 /* NativeMarkdownEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeMarkdownEditor.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -121,6 +123,7 @@
 		BF4A2456B794ACCC43BF3BCD /* Editor */ = {
 			isa = PBXGroup;
 			children = (
+				E0947A40A52F9EE928CA25EB /* MarkdownDocumentCommands.swift */,
 				0798F934F164FBC42F181907 /* MarkdownEditorCommands.swift */,
 				F8614F525C4E1EE5FD88C789 /* NativeMarkdownEditor.swift */,
 			);
@@ -208,6 +211,7 @@
 				6BF69B316F3063DFC3D9B86B /* GoogleOAuthConfiguration.swift in Sources */,
 				58BF0BF27B79EAC6BD7DF23B /* GoogleOAuthTokenClient.swift in Sources */,
 				F756B8F5959CD0022D11D57F /* KeychainRefreshTokenStore.swift in Sources */,
+				F213C7FBBA5C6291E2BDFE1D /* MarkdownDocumentCommands.swift in Sources */,
 				D065247233EB56FB1269FA7E /* MarkdownDriveApp.swift in Sources */,
 				3BB1D3A7FB872B483D0FE89C /* MarkdownEditorCommands.swift in Sources */,
 				B71BCCE314A8B389DB6E7F61 /* NativeMarkdownEditor.swift in Sources */,

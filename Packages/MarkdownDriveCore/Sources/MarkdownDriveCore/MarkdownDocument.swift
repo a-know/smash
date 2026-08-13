@@ -31,4 +31,12 @@ public struct MarkdownDocument: Equatable, Sendable {
         remoteRevision = revision
         savedText = text
     }
+
+    public mutating func recordSavedText(
+        _ text: String,
+        revision: DriveFileRevision
+    ) {
+        remoteRevision = revision
+        savedText = text
+    }
 }

@@ -1,6 +1,7 @@
 import Foundation
 
 public enum DocumentSaveError: Error, Equatable, Sendable {
+    case authentication(AuthenticationError)
     case conflict(remoteRevision: DriveFileRevision)
     case drive(DriveError)
     case remoteDeleted
@@ -12,6 +13,8 @@ public enum DocumentSaveError: Error, Equatable, Sendable {
 extension DocumentSaveError: LocalizedError {
     public var errorDescription: String? {
         switch self {
+        case .authentication(let error):
+            error.localizedDescription
         case .conflict:
             "Remote changes were detected. Your local edits were not saved."
         case .drive(let error):

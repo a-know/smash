@@ -63,6 +63,9 @@ public actor VaultDocumentSaver {
     }
 
     private static func preflightError(from error: any Error) -> DocumentSaveError {
+        if let authenticationError = error as? AuthenticationError {
+            return .authentication(authenticationError)
+        }
         guard let driveError = error as? DriveError else {
             return .unexpected
         }
@@ -70,6 +73,9 @@ public actor VaultDocumentSaver {
     }
 
     private static func updateError(from error: any Error) -> DocumentSaveError {
+        if let authenticationError = error as? AuthenticationError {
+            return .authentication(authenticationError)
+        }
         guard let driveError = error as? DriveError else {
             return .unexpected
         }

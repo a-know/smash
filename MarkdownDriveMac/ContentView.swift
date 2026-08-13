@@ -119,6 +119,15 @@ private struct VaultPlaceholderView: View {
         }
         .toolbar {
             ToolbarItem {
+                Button("Save", systemImage: "square.and.arrow.down") {
+                    Task {
+                        await appModel.saveDocument()
+                    }
+                }
+                .disabled(!appModel.canSaveDocument)
+                .accessibilityLabel("Save Markdown document")
+            }
+            ToolbarItem {
                 Button("Refresh", systemImage: "arrow.clockwise") {
                     Task {
                         await appModel.loadVaultTree()
@@ -148,6 +157,27 @@ private struct VaultPlaceholderView: View {
                 .accessibilityLabel("Sign out of Google")
             }
         }
+        .alert("Remote Changes Detected", isPresented: conflictAlert) {
+            Button("Cancel", role: .cancel) {
+                appModel.dismissConflictAlert()
+            }
+            Button("Reload Remote Version", role: .destructive) {
+                Task {
+                    await appModel.reloadRemoteDocumentAfterConflict()
+                }
+            }
+        } message: {
+            Text(
+                "This file was changed on another device. Reloading will discard the unsaved text currently in the editor."
+            )
+        }
+        .alert(saveAlertTitle, isPresented: saveErrorAlert) {
+            Button("OK", role: .cancel) {
+                appModel.dismissSaveErrorAlert()
+            }
+        } message: {
+            Text(saveErrorMessage)
+        }
     }
 
     private var vaultBrowserPresentation: Binding<Bool> {
@@ -159,6 +189,44 @@ private struct VaultPlaceholderView: View {
                 }
             }
         )
+    }
+
+    private var conflictAlert: Binding<Bool> {
+        Binding(
+            get: { appModel.isConflictAlertPresented },
+            set: { isPresented in
+                if !isPresented {
+                    appModel.dismissConflictAlert()
+                }
+            }
+        )
+    }
+
+    private var saveErrorAlert: Binding<Bool> {
+        Binding(
+            get: { appModel.isSaveErrorAlertPresented },
+            set: { isPresented in
+                if !isPresented {
+                    appModel.dismissSaveErrorAlert()
+                }
+            }
+        )
+    }
+
+    private var saveErrorMessage: String {
+        switch appModel.documentSaveState {
+        case .failed(let message), .statusUnknown(let message):
+            message
+        default:
+            "The document could not be saved. Your local edits are still available."
+        }
+    }
+
+    private var saveAlertTitle: String {
+        if case .statusUnknown = appModel.documentSaveState {
+            return "Save Status Unknown"
+        }
+        return "Save Failed"
     }
 }
 
@@ -266,13 +334,19 @@ private struct MarkdownEditorDetail: View {
                             .lineLimit(1)
                         Spacer()
                         if document.isDirty {
-                            Label("Edited", systemImage: "circle.fill")
+                            Label(saveStatusText, systemImage: saveStatusSymbol)
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(saveStatusColor)
                         } else {
-                            Text("Loaded from Google Drive")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            if appModel.documentSaveState == .saved {
+                                Label("Saved", systemImage: "checkmark.circle.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("Loaded from Google Drive")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                     .padding(.horizontal, 16)
@@ -298,6 +372,43 @@ private struct MarkdownEditorDetail: View {
             },
             set: { appModel.updateDocumentText($0) }
         )
+    }
+
+    private var saveStatusText: String {
+        switch appModel.documentSaveState {
+        case .saving:
+            "Saving…"
+        case .failed:
+            "Save failed"
+        case .conflict:
+            "Remote changes detected"
+        case .statusUnknown:
+            "Save status unknown"
+        case .idle, .saved:
+            "Edited"
+        }
+    }
+
+    private var saveStatusSymbol: String {
+        switch appModel.documentSaveState {
+        case .saving:
+            "arrow.trianglehead.2.clockwise.rotate.90"
+        case .failed, .statusUnknown:
+            "exclamationmark.triangle.fill"
+        case .conflict:
+            "arrow.trianglehead.branch"
+        case .idle, .saved:
+            "circle.fill"
+        }
+    }
+
+    private var saveStatusColor: Color {
+        switch appModel.documentSaveState {
+        case .failed, .conflict, .statusUnknown:
+            .orange
+        case .idle, .saving, .saved:
+            .secondary
+        }
     }
 }
 
