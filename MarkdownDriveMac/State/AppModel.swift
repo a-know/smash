@@ -45,7 +45,6 @@ final class AppModel: ObservableObject {
     @Published private(set) var pendingDocumentFileID: String?
     @Published private(set) var isDiscardConfirmationPresented = false
     @Published private(set) var isConflictAlertPresented = false
-    @Published private(set) var isOverwriteConfirmationPresented = false
     @Published private(set) var isSaveErrorAlertPresented = false
     @Published private(set) var isVaultBrowserPresented = false
 
@@ -315,15 +314,6 @@ final class AppModel: ObservableObject {
         isConflictAlertPresented = false
     }
 
-    func requestConflictOverwrite() {
-        isConflictAlertPresented = false
-        isOverwriteConfirmationPresented = true
-    }
-
-    func dismissOverwriteConfirmation() {
-        isOverwriteConfirmationPresented = false
-    }
-
     func reloadRemoteDocumentAfterConflict() async {
         guard case .loaded(let document) = documentState,
             case .loaded(let tree) = vaultTreeState
@@ -378,12 +368,12 @@ final class AppModel: ObservableObject {
         guard case .loaded(let document) = documentState,
             case .loaded(let tree) = vaultTreeState
         else {
-            dismissOverwriteConfirmation()
+            dismissConflictAlert()
             return
         }
 
         let documentBeingSaved = document
-        isOverwriteConfirmationPresented = false
+        isConflictAlertPresented = false
         documentSaveState = .saving
         do {
             let savedDocument = try await vaultDocumentSaver.overwriteRemote(
@@ -473,7 +463,6 @@ final class AppModel: ObservableObject {
         pendingDocumentFileID = nil
         isDiscardConfirmationPresented = false
         isConflictAlertPresented = false
-        isOverwriteConfirmationPresented = false
         isSaveErrorAlertPresented = false
     }
 }

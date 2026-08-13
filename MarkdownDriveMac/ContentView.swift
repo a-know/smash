@@ -117,6 +117,9 @@ private struct VaultPlaceholderView: View {
         .sheet(isPresented: vaultBrowserPresentation) {
             VaultFolderBrowserView(appModel: appModel)
         }
+        .sheet(isPresented: conflictAlert) {
+            ConflictResolutionView(appModel: appModel)
+        }
         .toolbar {
             ToolbarItem {
                 Button("Save", systemImage: "square.and.arrow.down") {
@@ -156,42 +159,6 @@ private struct VaultPlaceholderView: View {
                 .help("Save or discard the current edits before signing out.")
                 .accessibilityLabel("Sign out of Google")
             }
-        }
-        .alert("Remote Changes Detected", isPresented: conflictAlert) {
-            Button("Cancel", role: .cancel) {
-                appModel.dismissConflictAlert()
-            }
-            Button("Reload Remote Version", role: .destructive) {
-                Task {
-                    await appModel.reloadRemoteDocumentAfterConflict()
-                }
-            }
-            Button("Save a Copy") {
-                Task {
-                    await appModel.saveConflictCopy()
-                }
-            }
-            Button("Overwrite Anyway", role: .destructive) {
-                appModel.requestConflictOverwrite()
-            }
-        } message: {
-            Text(
-                "This file was changed on another device. Reloading will discard the unsaved text currently in the editor."
-            )
-        }
-        .alert("Overwrite Remote Changes?", isPresented: overwriteConfirmation) {
-            Button("Cancel", role: .cancel) {
-                appModel.dismissOverwriteConfirmation()
-            }
-            Button("Overwrite Remote File", role: .destructive) {
-                Task {
-                    await appModel.overwriteConflictingDocument()
-                }
-            }
-        } message: {
-            Text(
-                "This permanently replaces the newer Google Drive content with the text currently in this editor."
-            )
         }
         .alert(saveAlertTitle, isPresented: saveErrorAlert) {
             Button("OK", role: .cancel) {
@@ -235,17 +202,6 @@ private struct VaultPlaceholderView: View {
         )
     }
 
-    private var overwriteConfirmation: Binding<Bool> {
-        Binding(
-            get: { appModel.isOverwriteConfirmationPresented },
-            set: { isPresented in
-                if !isPresented {
-                    appModel.dismissOverwriteConfirmation()
-                }
-            }
-        )
-    }
-
     private var saveErrorMessage: String {
         switch appModel.documentSaveState {
         case .failed(let message), .statusUnknown(let message):
@@ -260,6 +216,82 @@ private struct VaultPlaceholderView: View {
             return "Save Status Unknown"
         }
         return "Save Failed"
+    }
+}
+
+private struct ConflictResolutionView: View {
+    @ObservedObject var appModel: AppModel
+    @State private var isConfirmingOverwrite = false
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 36))
+                .foregroundStyle(.yellow)
+                .accessibilityHidden(true)
+
+            VStack(spacing: 8) {
+                Text(isConfirmingOverwrite ? "Overwrite Remote Changes?" : "Remote Changes Detected")
+                    .font(.title2.bold())
+                Text(message)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 520)
+            }
+
+            if isConfirmingOverwrite {
+                overwriteButtons
+            } else {
+                resolutionButtons
+            }
+        }
+        .padding(28)
+        .frame(width: 640)
+        .interactiveDismissDisabled()
+    }
+
+    private var message: String {
+        if isConfirmingOverwrite {
+            return "This permanently replaces the newer Google Drive content with the text currently in this editor."
+        }
+        return
+            "This file was changed on another device. Reloading will discard the unsaved text currently in the editor."
+    }
+
+    private var resolutionButtons: some View {
+        HStack {
+            Button("Cancel", role: .cancel) {
+                appModel.dismissConflictAlert()
+            }
+            Spacer()
+            Button("Reload Remote Version", role: .destructive) {
+                Task {
+                    await appModel.reloadRemoteDocumentAfterConflict()
+                }
+            }
+            Button("Save a Copy") {
+                Task {
+                    await appModel.saveConflictCopy()
+                }
+            }
+            Button("Overwrite Anyway", role: .destructive) {
+                isConfirmingOverwrite = true
+            }
+        }
+    }
+
+    private var overwriteButtons: some View {
+        HStack {
+            Button("Back", role: .cancel) {
+                isConfirmingOverwrite = false
+            }
+            Spacer()
+            Button("Overwrite Remote File", role: .destructive) {
+                Task {
+                    await appModel.overwriteConflictingDocument()
+                }
+            }
+        }
     }
 }
 
