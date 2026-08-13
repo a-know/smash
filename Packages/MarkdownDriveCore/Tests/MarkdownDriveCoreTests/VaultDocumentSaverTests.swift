@@ -176,6 +176,48 @@ final class VaultDocumentSaverTests: XCTestCase {
         XCTAssertEqual(creations[0].data, Data("local conflict text".utf8))
     }
 
+    func testExplicitOverwriteIgnoresRevisionConflictButUpdatesSameFileOnce() async throws {
+        let client = FakeDriveWriteClient(
+            metadataResult: .success(metadata(revision: revision("2"))),
+            updateResult: .success(metadata(revision: revision("3")))
+        )
+        let saver = VaultDocumentSaver(driveWriteClient: client)
+        var document = makeDocument(revision: revision("1"))
+        document.updateText("intentional overwrite")
+
+        let saved = try await saver.overwriteRemote(document: document, in: makeTree())
+
+        XCTAssertEqual(saved.fileID, "note")
+        XCTAssertEqual(saved.remoteRevision, revision("3"))
+        XCTAssertFalse(saved.isDirty)
+        let updates = await client.updates
+        XCTAssertEqual(updates.count, 1)
+        XCTAssertEqual(updates[0].id, "note")
+        XCTAssertEqual(updates[0].data, Data("intentional overwrite".utf8))
+    }
+
+    func testExplicitOverwriteNetworkFailureRemainsDirtyAndIsNotRetried() async {
+        let client = FakeDriveWriteClient(
+            metadataResult: .success(metadata(revision: revision("2"))),
+            updateResult: .failure(.networkFailure)
+        )
+        let saver = VaultDocumentSaver(driveWriteClient: client)
+        var document = makeDocument(revision: revision("1"))
+        document.updateText("retain overwrite text")
+
+        do {
+            _ = try await saver.overwriteRemote(document: document, in: makeTree())
+            XCTFail("Expected unknown update status")
+        } catch {
+            XCTAssertEqual(error as? DocumentSaveError, .updateStatusUnknown)
+        }
+
+        XCTAssertTrue(document.isDirty)
+        XCTAssertEqual(document.text, "retain overwrite text")
+        let updateCount = await client.updateCount()
+        XCTAssertEqual(updateCount, 1)
+    }
+
     private func makeDocument(revision: DriveFileRevision) -> MarkdownDocument {
         MarkdownDocument(
             fileID: "note",

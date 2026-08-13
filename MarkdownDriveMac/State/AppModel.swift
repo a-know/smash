@@ -45,6 +45,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var pendingDocumentFileID: String?
     @Published private(set) var isDiscardConfirmationPresented = false
     @Published private(set) var isConflictAlertPresented = false
+    @Published private(set) var isOverwriteConfirmationPresented = false
     @Published private(set) var isSaveErrorAlertPresented = false
     @Published private(set) var isVaultBrowserPresented = false
 
@@ -314,6 +315,15 @@ final class AppModel: ObservableObject {
         isConflictAlertPresented = false
     }
 
+    func requestConflictOverwrite() {
+        isConflictAlertPresented = false
+        isOverwriteConfirmationPresented = true
+    }
+
+    func dismissOverwriteConfirmation() {
+        isOverwriteConfirmationPresented = false
+    }
+
     func reloadRemoteDocumentAfterConflict() async {
         guard case .loaded(let document) = documentState,
             case .loaded(let tree) = vaultTreeState
@@ -361,6 +371,44 @@ final class AppModel: ObservableObject {
             handleSaveError(error, fileID: documentBeingCopied.fileID)
         } catch {
             handleSaveError(.unexpected, fileID: documentBeingCopied.fileID)
+        }
+    }
+
+    func overwriteConflictingDocument() async {
+        guard case .loaded(let document) = documentState,
+            case .loaded(let tree) = vaultTreeState
+        else {
+            dismissOverwriteConfirmation()
+            return
+        }
+
+        let documentBeingSaved = document
+        isOverwriteConfirmationPresented = false
+        documentSaveState = .saving
+        do {
+            let savedDocument = try await vaultDocumentSaver.overwriteRemote(
+                document: documentBeingSaved,
+                in: tree
+            )
+            guard case .loaded(var currentDocument) = documentState,
+                currentDocument.fileID == documentBeingSaved.fileID
+            else {
+                return
+            }
+            if currentDocument.text == documentBeingSaved.text {
+                currentDocument = savedDocument
+            } else {
+                currentDocument.recordSavedText(
+                    savedDocument.text,
+                    revision: savedDocument.remoteRevision
+                )
+            }
+            documentState = .loaded(currentDocument)
+            documentSaveState = currentDocument.isDirty ? .idle : .saved
+        } catch let error as DocumentSaveError {
+            handleSaveError(error, fileID: documentBeingSaved.fileID)
+        } catch {
+            handleSaveError(.unexpected, fileID: documentBeingSaved.fileID)
         }
     }
 
@@ -425,6 +473,7 @@ final class AppModel: ObservableObject {
         pendingDocumentFileID = nil
         isDiscardConfirmationPresented = false
         isConflictAlertPresented = false
+        isOverwriteConfirmationPresented = false
         isSaveErrorAlertPresented = false
     }
 }

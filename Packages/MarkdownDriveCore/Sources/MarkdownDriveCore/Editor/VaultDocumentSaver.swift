@@ -102,6 +102,43 @@ public actor VaultDocumentSaver {
         )
     }
 
+    public func overwriteRemote(
+        document: MarkdownDocument,
+        in tree: VaultTree
+    ) async throws -> MarkdownDocument {
+        guard document.isDirty,
+            tree.markdownFile(id: document.fileID) != nil
+        else {
+            throw DocumentSaveError.vaultBoundaryViolation
+        }
+
+        let remoteMetadata: DriveFileMetadata
+        do {
+            remoteMetadata = try await driveWriteClient.getFileMetadata(id: document.fileID)
+        } catch {
+            throw Self.preflightError(from: error)
+        }
+        try validate(metadata: remoteMetadata, document: document, tree: tree)
+
+        let updatedMetadata: DriveFileMetadata
+        do {
+            updatedMetadata = try await driveWriteClient.updateFileContent(
+                id: document.fileID,
+                data: Data(document.text.utf8),
+                mimeType: "text/markdown; charset=utf-8"
+            )
+        } catch DriveError.networkFailure {
+            throw DocumentSaveError.updateStatusUnknown
+        } catch {
+            throw Self.updateError(from: error)
+        }
+        try validate(metadata: updatedMetadata, document: document, tree: tree)
+
+        var savedDocument = document
+        savedDocument.markSaved(revision: updatedMetadata.revision)
+        return savedDocument
+    }
+
     private func validate(
         metadata: DriveFileMetadata,
         document: MarkdownDocument,

@@ -171,9 +171,26 @@ private struct VaultPlaceholderView: View {
                     await appModel.saveConflictCopy()
                 }
             }
+            Button("Overwrite Anyway", role: .destructive) {
+                appModel.requestConflictOverwrite()
+            }
         } message: {
             Text(
                 "This file was changed on another device. Reloading will discard the unsaved text currently in the editor."
+            )
+        }
+        .alert("Overwrite Remote Changes?", isPresented: overwriteConfirmation) {
+            Button("Cancel", role: .cancel) {
+                appModel.dismissOverwriteConfirmation()
+            }
+            Button("Overwrite Remote File", role: .destructive) {
+                Task {
+                    await appModel.overwriteConflictingDocument()
+                }
+            }
+        } message: {
+            Text(
+                "This permanently replaces the newer Google Drive content with the text currently in this editor."
             )
         }
         .alert(saveAlertTitle, isPresented: saveErrorAlert) {
@@ -213,6 +230,17 @@ private struct VaultPlaceholderView: View {
             set: { isPresented in
                 if !isPresented {
                     appModel.dismissSaveErrorAlert()
+                }
+            }
+        )
+    }
+
+    private var overwriteConfirmation: Binding<Bool> {
+        Binding(
+            get: { appModel.isOverwriteConfirmationPresented },
+            set: { isPresented in
+                if !isPresented {
+                    appModel.dismissOverwriteConfirmation()
                 }
             }
         )
