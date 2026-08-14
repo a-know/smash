@@ -32,7 +32,11 @@ public struct VaultTree: Equatable, Sendable {
     }
 
     public func containsFolder(id: String) -> Bool {
-        Self.findFolder(id: id, in: root) != nil
+        folder(id: id) != nil
+    }
+
+    public func folder(id: String) -> DriveItem? {
+        Self.findFolder(id: id, in: root)
     }
 
     private static func countMarkdownFiles(in node: DriveTreeNode) -> Int {

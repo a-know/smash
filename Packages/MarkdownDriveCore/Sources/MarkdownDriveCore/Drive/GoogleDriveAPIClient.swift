@@ -1,6 +1,8 @@
 import Foundation
 
-public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteClient {
+public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteClient,
+    DriveItemCreationClient
+{
     public static let folderMimeType = "application/vnd.google-apps.folder"
 
     private let accessTokenProvider: any DriveAccessTokenProvider
@@ -115,6 +117,30 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
         return try await performWrite(request)
     }
 
+    public func createFolder(name: String, parentID: String) async throws -> DriveItem {
+        let url = baseURL.appendingPathComponent("files")
+        var request = try await authorizedRequest(
+            url: url,
+            queryItems: [
+                URLQueryItem(name: "supportsAllDrives", value: "true"),
+                URLQueryItem(name: "fields", value: Self.fileFields),
+            ]
+        )
+        request.httpMethod = "POST"
+        request.httpBody = try metadataBody(
+            name: name,
+            parentID: parentID,
+            mimeType: Self.folderMimeType
+        )
+        request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+
+        let item = try await performItemWrite(request)
+        guard item.kind == .folder, !item.isTrashed else {
+            throw DriveError.writeStatusUnknown
+        }
+        return item
+    }
+
     public func listChildren(of folderID: String) async throws -> [DriveItem] {
         var items: [DriveItem] = []
         var pageToken: String?
@@ -224,6 +250,24 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
         return body
     }
 
+    private func metadataBody(
+        name: String,
+        parentID: String,
+        mimeType: String
+    ) throws -> Data {
+        do {
+            return try JSONEncoder().encode(
+                GoogleDriveCreateFileMetadata(
+                    name: name,
+                    parents: [parentID],
+                    mimeType: mimeType
+                )
+            )
+        } catch {
+            throw DriveError.invalidResponse
+        }
+    }
+
     private func authorizedRequest(
         url: URL,
         queryItems: [URLQueryItem]
@@ -314,6 +358,28 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
         }
     }
 
+    private func performItemWrite(_ request: URLRequest) async throws -> DriveItem {
+        let data: Data
+        do {
+            data = try await perform(
+                request,
+                retryAfterAuthenticationFailure: false
+            )
+        } catch DriveError.networkFailure,
+            DriveError.serverUnavailable,
+            DriveError.invalidResponse
+        {
+            throw DriveError.writeStatusUnknown
+        }
+
+        do {
+            return try decodeFile(from: data).driveItem
+        } catch {
+            // A successful HTTP response means Drive may already have committed the write.
+            throw DriveError.writeStatusUnknown
+        }
+    }
+
     private func decodeFile(from data: Data) throws -> GoogleDriveFile {
         do {
             return try JSONDecoder().decode(GoogleDriveFile.self, from: data)
@@ -382,6 +448,13 @@ private struct GoogleDriveErrorEnvelope: Decodable {
 private struct GoogleDriveCreateFileMetadata: Encodable {
     let name: String
     let parents: [String]
+    let mimeType: String?
+
+    init(name: String, parents: [String], mimeType: String? = nil) {
+        self.name = name
+        self.parents = parents
+        self.mimeType = mimeType
+    }
 }
 
 private struct GoogleDriveErrorDetails: Decodable {

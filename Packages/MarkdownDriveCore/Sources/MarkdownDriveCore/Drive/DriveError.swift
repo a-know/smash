@@ -7,6 +7,7 @@ public enum DriveError: Error, Equatable, Sendable {
     case fileChangedDuringDownload
     case incompleteSearch
     case invalidHierarchy
+    case invalidName
     case invalidResponse
     case invalidUTF8
     case itemIsNotFolder
@@ -37,6 +38,8 @@ extension DriveError: LocalizedError {
             "Google Drive returned an incomplete folder listing."
         case .invalidHierarchy:
             "The Vault contains an invalid folder hierarchy."
+        case .invalidName:
+            "Enter a non-empty name without slashes or control characters."
         case .invalidResponse:
             "Google Drive returned an invalid response."
         case .invalidUTF8:
