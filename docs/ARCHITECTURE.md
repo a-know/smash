@@ -48,13 +48,18 @@ AppKit types do not cross into `MarkdownDriveCore`.
 2. The selected Vault ID is restored from UserDefaults.
 3. `VaultTreeLoader` starts at that ID and recursively lists descendants, following every Drive API
    page. Only folders and Markdown files are exposed to the application UI.
-4. Selecting or reloading a file verifies that its ID belongs to the loaded Vault tree, downloads its
-   UTF-8 bytes, and revalidates its current Drive ancestor chain back to the Vault root before the
-   editor accepts the result.
+4. Selecting or reloading a file verifies that its ID belongs to the loaded Vault tree and validates
+   its current Drive ancestor chain before downloading. The chain is checked again after the stable
+   UTF-8 download before the editor accepts the result.
 5. The editor holds a `MarkdownDocument` containing the current text, last-saved text, and the Drive
    revision observed during the stable download.
 6. Saving verifies the Vault boundary and remote revision again before updating the same Drive file
    ID.
+
+Safe Drive reads retry once when Google rejects a cached access token: authentication refresh is
+single-flight, the request is rebuilt with the refreshed token, and a second rejection requires the
+user to authenticate again. Writes are never retried after an HTTP response because their commit
+status may be ambiguous.
 
 An OAuth token permits broader Drive access than the Vault. Possession of that token or an arbitrary
 file ID is never treated as proof of Vault membership.

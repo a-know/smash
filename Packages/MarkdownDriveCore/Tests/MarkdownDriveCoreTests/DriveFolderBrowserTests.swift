@@ -85,6 +85,62 @@ final class DriveFolderBrowserTests: XCTestCase {
         XCTAssertEqual(vault.rootFolderID, "root")
     }
 
+    func testReloadSupersedesAnInFlightFolderOpen() async throws {
+        let root = folder(id: "root", name: "My Drive")
+        let work = folder(id: "work", name: "Work")
+        let client = FakeDriveClient(
+            items: ["root": root],
+            children: ["root": [work], "work": []],
+            delays: ["work": 100_000_000]
+        )
+        let browser = DriveFolderBrowser(driveClient: client)
+        _ = try await browser.loadMyDrive()
+
+        let opening = Task {
+            try await browser.openFolder(id: "work")
+        }
+        try await Task.sleep(nanoseconds: 10_000_000)
+        let reloaded = try await browser.loadMyDrive()
+
+        do {
+            _ = try await opening.value
+            XCTFail("Expected the stale folder open to be cancelled")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+        let vault = try await browser.makeVault()
+        XCTAssertEqual(reloaded.path, [root])
+        XCTAssertEqual(vault.rootFolderID, "root")
+    }
+
+    func testBackAtRootSupersedesAnInFlightFolderOpen() async throws {
+        let root = folder(id: "root", name: "My Drive")
+        let work = folder(id: "work", name: "Work")
+        let client = FakeDriveClient(
+            items: ["root": root],
+            children: ["root": [work], "work": []],
+            delays: ["work": 100_000_000]
+        )
+        let browser = DriveFolderBrowser(driveClient: client)
+        _ = try await browser.loadMyDrive()
+
+        let opening = Task {
+            try await browser.openFolder(id: "work")
+        }
+        try await Task.sleep(nanoseconds: 10_000_000)
+        let returned = try await browser.navigateBack()
+
+        do {
+            _ = try await opening.value
+            XCTFail("Expected the stale folder open to be cancelled")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+        let vault = try await browser.makeVault()
+        XCTAssertEqual(returned.path, [root])
+        XCTAssertEqual(vault.rootFolderID, "root")
+    }
+
     private func folder(
         id: String,
         name: String,
@@ -104,15 +160,18 @@ private actor FakeDriveClient: DriveClient {
     private let items: [String: DriveItem]
     private let children: [String: [DriveItem]]
     private let failingFolderIDs: Set<String>
+    private let delays: [String: UInt64]
 
     init(
         items: [String: DriveItem],
         children: [String: [DriveItem]],
-        failingFolderIDs: Set<String> = []
+        failingFolderIDs: Set<String> = [],
+        delays: [String: UInt64] = [:]
     ) {
         self.items = items
         self.children = children
         self.failingFolderIDs = failingFolderIDs
+        self.delays = delays
     }
 
     func getItem(id: String) async throws -> DriveItem {
@@ -123,6 +182,9 @@ private actor FakeDriveClient: DriveClient {
     }
 
     func listChildren(of folderID: String) async throws -> [DriveItem] {
+        if let delay = delays[folderID] {
+            try await Task.sleep(nanoseconds: delay)
+        }
         if failingFolderIDs.contains(folderID) {
             throw DriveError.networkFailure
         }

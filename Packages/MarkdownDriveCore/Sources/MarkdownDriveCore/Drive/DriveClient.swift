@@ -57,6 +57,7 @@ public struct DriveFileMetadata: Equatable, Sendable {
 
 public protocol DriveAccessTokenProvider: Sendable {
     func validAccessToken() async throws -> AccessToken
+    func refreshAccessToken(afterRejected rejectedToken: AccessToken) async throws -> AccessToken
 }
 
 extension AuthenticationController: DriveAccessTokenProvider {}

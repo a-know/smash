@@ -2,6 +2,7 @@ public actor AuthenticationController {
     public private(set) var state: AuthenticationState = .signedOut
 
     private let service: any AuthenticationService
+    private var operationGeneration: UInt64 = 0
 
     public init(service: any AuthenticationService) {
         self.service = service
@@ -9,16 +10,23 @@ public actor AuthenticationController {
 
     @discardableResult
     public func restoreSession() async -> AuthenticationState {
+        let generation = beginOperation()
         state = .restoring
 
         do {
             if let session = try await service.restoreSession() {
-                state = .signedIn(session)
+                if operationGeneration == generation {
+                    state = .signedIn(session)
+                }
             } else {
-                state = .signedOut
+                if operationGeneration == generation {
+                    state = .signedOut
+                }
             }
         } catch {
-            state = .failed(Self.authenticationError(from: error))
+            if operationGeneration == generation {
+                state = .failed(Self.authenticationError(from: error))
+            }
         }
 
         return state
@@ -26,12 +34,18 @@ public actor AuthenticationController {
 
     @discardableResult
     public func signIn() async -> AuthenticationState {
+        let generation = beginOperation()
         state = .signingIn
 
         do {
-            state = .signedIn(try await service.signIn())
+            let session = try await service.signIn()
+            if operationGeneration == generation {
+                state = .signedIn(session)
+            }
         } catch {
-            state = .failed(Self.authenticationError(from: error))
+            if operationGeneration == generation {
+                state = .failed(Self.authenticationError(from: error))
+            }
         }
 
         return state
@@ -39,26 +53,51 @@ public actor AuthenticationController {
 
     @discardableResult
     public func signOut() async -> AuthenticationState {
+        let generation = beginOperation()
         do {
             try await service.signOut()
-            state = .signedOut
+            if operationGeneration == generation {
+                state = .signedOut
+            }
         } catch {
-            state = .failed(Self.authenticationError(from: error))
+            if operationGeneration == generation {
+                state = .failed(Self.authenticationError(from: error))
+            }
         }
 
         return state
     }
 
     public func validAccessToken() async throws -> AccessToken {
+        let generation = operationGeneration
         do {
             return try await service.validAccessToken()
         } catch AuthenticationError.reauthenticationRequired {
-            state = .failed(.reauthenticationRequired)
+            if operationGeneration == generation {
+                state = .failed(.reauthenticationRequired)
+            }
+            throw AuthenticationError.reauthenticationRequired
+        }
+    }
+
+    public func refreshAccessToken(afterRejected rejectedToken: AccessToken) async throws -> AccessToken {
+        let generation = operationGeneration
+        do {
+            return try await service.refreshAccessToken(afterRejected: rejectedToken)
+        } catch AuthenticationError.reauthenticationRequired {
+            if operationGeneration == generation {
+                state = .failed(.reauthenticationRequired)
+            }
             throw AuthenticationError.reauthenticationRequired
         }
     }
 
     private static func authenticationError(from error: any Error) -> AuthenticationError {
         error as? AuthenticationError ?? .unexpected
+    }
+
+    private func beginOperation() -> UInt64 {
+        operationGeneration &+= 1
+        return operationGeneration
     }
 }

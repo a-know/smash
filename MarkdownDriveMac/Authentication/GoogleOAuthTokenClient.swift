@@ -1,7 +1,23 @@
 import Foundation
 import MarkdownDriveCore
 
-struct GoogleOAuthTokenClient: Sendable {
+protocol GoogleOAuthTokenClientProtocol: Sendable {
+    func exchangeAuthorizationCode(
+        _ code: String,
+        codeVerifier: String,
+        redirectURI: URL,
+        configuration: GoogleOAuthConfiguration
+    ) async throws -> GoogleTokenResponse
+
+    func refreshAccessToken(
+        refreshToken: String,
+        configuration: GoogleOAuthConfiguration
+    ) async throws -> GoogleTokenResponse
+
+    func revoke(_ token: String) async
+}
+
+struct GoogleOAuthTokenClient: GoogleOAuthTokenClientProtocol {
     private let session: URLSession
 
     init(session: URLSession = .shared) {

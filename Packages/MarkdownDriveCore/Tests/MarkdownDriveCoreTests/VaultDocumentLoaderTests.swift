@@ -101,6 +101,26 @@ final class VaultDocumentLoaderTests: XCTestCase {
         }
     }
 
+    func testRejectsCurrentFileOutsideVaultBeforeDownloading() async {
+        let client = FakeDriveContentClient(
+            result: .failure(.itemNotFound),
+            itemResults: [
+                "note": .success(file(id: "note", parentIDs: ["outside-folder"]))
+            ]
+        )
+        let loader = VaultDocumentLoader(driveContentClient: client)
+
+        do {
+            _ = try await loader.load(fileID: "note", from: makeTree())
+            XCTFail("Expected Vault boundary violation")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .vaultBoundaryViolation)
+        }
+
+        let requestedIDs = await client.requestedIDs()
+        XCTAssertEqual(requestedIDs, [])
+    }
+
     func testRejectsFileWhoseAncestorMovedOutsideVaultAfterTreeWasLoaded() async {
         let movedFolder = DriveItem(
             id: "nested",
@@ -194,17 +214,27 @@ private actor FakeDriveContentClient: DriveContentClient {
         itemResults: [String: Result<DriveItem, DriveError>]? = nil
     ) {
         self.result = result
-        self.itemResults =
-            itemResults ?? [
-                "nested": .success(
-                    DriveItem(
-                        id: "nested",
-                        name: "nested",
-                        kind: .folder,
-                        parentIDs: ["vault"]
-                    )
+        var resolvedItemResults: [String: Result<DriveItem, DriveError>] = [
+            "note": .success(
+                DriveItem(
+                    id: "note",
+                    name: "note.md",
+                    kind: .file,
+                    mimeType: "text/markdown",
+                    parentIDs: ["nested"]
                 )
-            ]
+            ),
+            "nested": .success(
+                DriveItem(
+                    id: "nested",
+                    name: "nested",
+                    kind: .folder,
+                    parentIDs: ["vault"]
+                )
+            ),
+        ]
+        resolvedItemResults.merge(itemResults ?? [:]) { _, replacement in replacement }
+        self.itemResults = resolvedItemResults
     }
 
     func getItem(id: String) async throws -> DriveItem {

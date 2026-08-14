@@ -321,16 +321,30 @@ private struct VaultSidebar: View {
                     }
                 }
             case .loaded(let tree):
-                List(selection: treeSelection) {
-                    OutlineGroup([tree.root], children: \.outlineChildren) { node in
-                        Label(
-                            node.item.name,
-                            systemImage: node.item.kind == .folder ? "folder" : "doc.text"
-                        )
-                        .tag(node.item.id)
+                if tree.root.children.isEmpty {
+                    ContentUnavailableView {
+                        Label("Vault Is Empty", systemImage: "folder")
+                    } description: {
+                        Text("No Markdown files or subfolders were found in this Vault.")
+                    } actions: {
+                        Button("Refresh") {
+                            Task {
+                                await appModel.loadVaultTree()
+                            }
+                        }
                     }
+                } else {
+                    List(selection: treeSelection) {
+                        OutlineGroup([tree.root], children: \.outlineChildren) { node in
+                            Label(
+                                node.item.name,
+                                systemImage: node.item.kind == .folder ? "folder" : "doc.text"
+                            )
+                            .tag(node.item.id)
+                        }
+                    }
+                    .accessibilityLabel("Vault files and folders")
                 }
-                .accessibilityLabel("Vault files and folders")
             }
         }
         .navigationTitle(vault.displayName)

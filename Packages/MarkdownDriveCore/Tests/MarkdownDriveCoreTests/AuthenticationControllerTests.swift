@@ -70,6 +70,22 @@ final class AuthenticationControllerTests: XCTestCase {
         XCTAssertEqual(state, .failed(.reauthenticationRequired))
     }
 
+    func testRejectedAccessTokenRefreshFailureRequiresReauthentication() async {
+        let service = FakeAuthenticationService(accessTokenError: .reauthenticationRequired)
+        let controller = AuthenticationController(service: service)
+
+        do {
+            _ = try await controller.refreshAccessToken(
+                afterRejected: AccessToken(rawValue: "rejected")
+            )
+            XCTFail("Expected rejected access token refresh to fail")
+        } catch {
+            XCTAssertEqual(error as? AuthenticationError, .reauthenticationRequired)
+        }
+        let state = await controller.state
+        XCTAssertEqual(state, .failed(.reauthenticationRequired))
+    }
+
     func testSignOutClearsAuthenticatedState() async {
         let session = AuthenticatedSession(accessTokenExpiresAt: Date(timeIntervalSince1970: 1_000))
         let service = FakeAuthenticationService(signInSession: session)
@@ -124,5 +140,9 @@ private actor FakeAuthenticationService: AuthenticationService {
             throw accessTokenError
         }
         return AccessToken(rawValue: "fake-access-token")
+    }
+
+    func refreshAccessToken(afterRejected rejectedToken: AccessToken) async throws -> AccessToken {
+        try await validAccessToken()
     }
 }
