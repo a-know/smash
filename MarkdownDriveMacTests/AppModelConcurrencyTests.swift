@@ -19,6 +19,7 @@ final class AppModelConcurrencyTests: XCTestCase {
         )
         let appModel = makeAppModel(driveClient: driveClient)
         await appModel.restoreSession()
+        appModel.setFolderExpanded(id: "vault", isExpanded: true)
 
         let olderRefresh = Task { @MainActor in
             await appModel.loadVaultTree()
@@ -32,6 +33,7 @@ final class AppModelConcurrencyTests: XCTestCase {
         }
         XCTAssertNotNil(tree.markdownFile(id: "new"))
         XCTAssertNil(tree.markdownFile(id: "old"))
+        XCTAssertEqual(appModel.expandedFolderIDs, ["vault"])
     }
 
     func testClearingSelectionInvalidatesInFlightDocumentLoad() async throws {

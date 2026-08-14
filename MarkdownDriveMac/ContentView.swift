@@ -543,13 +543,7 @@ private struct VaultSidebar: View {
                     }
                 } else {
                     List(selection: treeSelection) {
-                        OutlineGroup([tree.root], children: \.outlineChildren) { node in
-                            Label(
-                                node.item.name,
-                                systemImage: node.item.kind == .folder ? "folder" : "doc.text"
-                            )
-                            .tag(node.item.id)
-                        }
+                        VaultTreeNodeRow(node: tree.root, appModel: appModel)
                     }
                     .accessibilityLabel("Vault files and folders")
                 }
@@ -585,6 +579,34 @@ private struct VaultSidebar: View {
         Binding(
             get: { appModel.isDiscardConfirmationPresented },
             set: { appModel.setDiscardConfirmationPresented($0) }
+        )
+    }
+}
+
+private struct VaultTreeNodeRow: View {
+    let node: DriveTreeNode
+    @ObservedObject var appModel: AppModel
+
+    var body: some View {
+        if node.item.kind == .folder {
+            DisclosureGroup(isExpanded: expansion) {
+                ForEach(node.children) { child in
+                    VaultTreeNodeRow(node: child, appModel: appModel)
+                }
+            } label: {
+                Label(node.item.name, systemImage: "folder")
+            }
+            .tag(node.item.id)
+        } else {
+            Label(node.item.name, systemImage: "doc.text")
+                .tag(node.item.id)
+        }
+    }
+
+    private var expansion: Binding<Bool> {
+        Binding(
+            get: { appModel.expandedFolderIDs.contains(node.item.id) },
+            set: { appModel.setFolderExpanded(id: node.item.id, isExpanded: $0) }
         )
     }
 }

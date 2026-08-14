@@ -55,6 +55,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var documentState: DocumentState = .idle
     @Published private(set) var documentSaveState: DocumentSaveState = .idle
     @Published private(set) var selectedTreeItemID: String?
+    @Published private(set) var expandedFolderIDs: Set<String> = []
     @Published private(set) var pendingDocumentFileID: String?
     @Published private(set) var isDiscardConfirmationPresented = false
     @Published private(set) var isConflictAlertPresented = false
@@ -432,6 +433,14 @@ final class AppModel: ObservableObject {
         return document.isDirty
     }
 
+    func setFolderExpanded(id: String, isExpanded: Bool) {
+        if isExpanded {
+            expandedFolderIDs.insert(id)
+        } else {
+            expandedFolderIDs.remove(id)
+        }
+    }
+
     var canSaveDocument: Bool {
         hasDirtyDocument && documentSaveState != .saving
     }
@@ -800,6 +809,7 @@ final class AppModel: ObservableObject {
         documentState = .idle
         documentSaveState = .idle
         selectedTreeItemID = nil
+        expandedFolderIDs.removeAll()
         pendingDocumentFileID = nil
         isDiscardConfirmationPresented = false
         isConflictAlertPresented = false
