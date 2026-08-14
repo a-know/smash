@@ -56,6 +56,8 @@ final class AppModel: ObservableObject {
     private let vaultDocumentSaver: VaultDocumentSaver
     private let vaultStore: any VaultStore
     private var didAttemptRestore = false
+    private var vaultBrowserLoadID: UUID?
+    private var vaultTreeLoadID: UUID?
     private var documentLoadID: UUID?
 
     init(
@@ -96,6 +98,7 @@ final class AppModel: ObservableObject {
         guard !hasDirtyDocument else {
             return
         }
+        invalidateVaultLoads()
         authenticationState = await authenticationController.signOut()
         if authenticationState == .signedOut {
             selectedVault = nil
@@ -114,6 +117,7 @@ final class AppModel: ObservableObject {
     }
 
     func dismissVaultBrowser() {
+        vaultBrowserLoadID = nil
         isVaultBrowserPresented = false
         vaultBrowserState = .idle
     }
@@ -156,11 +160,25 @@ final class AppModel: ObservableObject {
     private func updateBrowserState(
         operation: () async throws -> DriveFolderBrowserSnapshot
     ) async {
+        let loadID = UUID()
+        vaultBrowserLoadID = loadID
         vaultBrowserState = .loading
         do {
-            vaultBrowserState = .loaded(try await operation())
+            let snapshot = try await operation()
+            guard vaultBrowserLoadID == loadID,
+                isVaultBrowserPresented
+            else {
+                return
+            }
+            vaultBrowserState = .loaded(snapshot)
         } catch {
+            guard vaultBrowserLoadID == loadID,
+                isVaultBrowserPresented
+            else {
+                return
+            }
             vaultBrowserState = .failed(error.localizedDescription)
+            transitionToReauthenticationIfNeeded(error)
         }
     }
 
@@ -169,6 +187,7 @@ final class AppModel: ObservableObject {
             return
         }
         do {
+            vaultTreeLoadID = nil
             selectedVault = try await vaultStore.loadVault()
             vaultPersistenceError = nil
             await loadVaultTree()
@@ -180,16 +199,30 @@ final class AppModel: ObservableObject {
 
     func loadVaultTree() async {
         guard let selectedVault else {
+            vaultTreeLoadID = nil
             vaultTreeState = .idle
             return
         }
+        let loadID = UUID()
+        let vaultRootFolderID = selectedVault.rootFolderID
+        vaultTreeLoadID = loadID
         vaultTreeState = .loading
         do {
-            vaultTreeState = .loaded(
-                try await vaultTreeLoader.load(vault: selectedVault)
-            )
+            let tree = try await vaultTreeLoader.load(vault: selectedVault)
+            guard vaultTreeLoadID == loadID,
+                self.selectedVault?.rootFolderID == vaultRootFolderID
+            else {
+                return
+            }
+            vaultTreeState = .loaded(tree)
         } catch {
+            guard vaultTreeLoadID == loadID,
+                self.selectedVault?.rootFolderID == vaultRootFolderID
+            else {
+                return
+            }
             vaultTreeState = .failed(error.localizedDescription)
+            transitionToReauthenticationIfNeeded(error)
         }
     }
 
@@ -206,12 +239,14 @@ final class AppModel: ObservableObject {
 
     func selectTreeItem(id: String?) async {
         guard let id else {
+            cancelActiveDocumentLoad()
             selectedTreeItemID = nil
             return
         }
         guard case .loaded(let tree) = vaultTreeState,
             tree.markdownFile(id: id) != nil
         else {
+            cancelActiveDocumentLoad()
             selectedTreeItemID = id
             return
         }
@@ -517,11 +552,12 @@ final class AppModel: ObservableObject {
                 return
             }
             documentState = .failed(fileID: fileID, message: error.localizedDescription)
+            transitionToReauthenticationIfNeeded(error)
         }
     }
 
     private func clearDocument() {
-        documentLoadID = nil
+        cancelActiveDocumentLoad()
         documentState = .idle
         documentSaveState = .idle
         selectedTreeItemID = nil
@@ -529,5 +565,30 @@ final class AppModel: ObservableObject {
         isDiscardConfirmationPresented = false
         isConflictAlertPresented = false
         isSaveErrorAlertPresented = false
+    }
+
+    private func cancelActiveDocumentLoad() {
+        documentLoadID = nil
+        if case .loading = documentState {
+            documentState = .idle
+            documentSaveState = .idle
+        }
+    }
+
+    private func invalidateVaultLoads() {
+        vaultBrowserLoadID = nil
+        vaultTreeLoadID = nil
+    }
+
+    private func transitionToReauthenticationIfNeeded(_ error: any Error) {
+        if let authenticationError = error as? AuthenticationError,
+            authenticationError == .reauthenticationRequired
+        {
+            authenticationState = .failed(authenticationError)
+        } else if let driveError = error as? DriveError,
+            driveError == .authenticationRequired
+        {
+            authenticationState = .failed(.reauthenticationRequired)
+        }
     }
 }

@@ -24,18 +24,22 @@ public actor DriveFolderBrowser {
     private let driveClient: any DriveClient
     private var path: [DriveItem] = []
     private var childFolders: [DriveItem] = []
+    private var navigationGeneration: UInt64 = 0
 
     public init(driveClient: any DriveClient) {
         self.driveClient = driveClient
     }
 
     public func loadMyDrive() async throws -> DriveFolderBrowserSnapshot {
+        let generation = beginNavigation()
         let root = try await driveClient.getItem(id: Self.myDriveRootID)
         guard root.kind == .folder else {
             throw DriveError.itemIsNotFolder
         }
+        let loadedChildFolders = try await loadChildFolders(of: root.id)
+        try validateNavigation(generation)
         path = [root]
-        childFolders = try await loadChildFolders(of: root.id)
+        childFolders = loadedChildFolders
         return snapshot
     }
 
@@ -43,29 +47,27 @@ public actor DriveFolderBrowser {
         guard let folder = childFolders.first(where: { $0.id == id }) else {
             throw DriveError.browserBoundaryViolation
         }
-        path.append(folder)
-        do {
-            childFolders = try await loadChildFolders(of: folder.id)
-            return snapshot
-        } catch {
-            path.removeLast()
-            throw error
-        }
+        let expectedPath = path
+        let generation = beginNavigation()
+        let loadedChildFolders = try await loadChildFolders(of: folder.id)
+        try validateNavigation(generation, expectedPath: expectedPath)
+        path = expectedPath + [folder]
+        childFolders = loadedChildFolders
+        return snapshot
     }
 
     public func navigateBack() async throws -> DriveFolderBrowserSnapshot {
+        let generation = beginNavigation()
         guard path.count > 1 else {
             return snapshot
         }
-        let previousPath = path
-        path.removeLast()
-        do {
-            childFolders = try await loadChildFolders(of: path[path.count - 1].id)
-            return snapshot
-        } catch {
-            path = previousPath
-            throw error
-        }
+        let expectedPath = path
+        let destinationPath = Array(expectedPath.dropLast())
+        let loadedChildFolders = try await loadChildFolders(of: destinationPath[destinationPath.count - 1].id)
+        try validateNavigation(generation, expectedPath: expectedPath)
+        path = destinationPath
+        childFolders = loadedChildFolders
+        return snapshot
     }
 
     public func makeVault() throws -> Vault {
@@ -81,6 +83,22 @@ public actor DriveFolderBrowser {
             .sorted { lhs, rhs in
                 lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
             }
+    }
+
+    private func beginNavigation() -> UInt64 {
+        navigationGeneration &+= 1
+        return navigationGeneration
+    }
+
+    private func validateNavigation(
+        _ generation: UInt64,
+        expectedPath: [DriveItem]? = nil
+    ) throws {
+        guard navigationGeneration == generation,
+            expectedPath == nil || path == expectedPath
+        else {
+            throw CancellationError()
+        }
     }
 
     private var snapshot: DriveFolderBrowserSnapshot {

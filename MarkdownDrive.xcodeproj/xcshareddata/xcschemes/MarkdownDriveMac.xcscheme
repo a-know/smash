@@ -20,6 +20,20 @@
                ReferencedContainer = "container:MarkdownDrive.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "5046911FE3E51476E85F234F"
+               BuildableName = "MarkdownDriveMacTests.xctest"
+               BlueprintName = "MarkdownDriveMacTests"
+               ReferencedContainer = "container:MarkdownDrive.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
@@ -37,6 +51,17 @@
          </BuildableReference>
       </MacroExpansion>
       <Testables>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "5046911FE3E51476E85F234F"
+               BuildableName = "MarkdownDriveMacTests.xctest"
+               BlueprintName = "MarkdownDriveMacTests"
+               ReferencedContainer = "container:MarkdownDrive.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction

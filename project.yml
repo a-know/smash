@@ -38,11 +38,31 @@ targets:
         MARKETING_VERSION: 0.1.0
         PRODUCT_BUNDLE_IDENTIFIER: com.a-know.MarkdownDrive
 
+  MarkdownDriveMacTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: MarkdownDriveMacTests
+    dependencies:
+      - target: MarkdownDriveMac
+      - package: MarkdownDriveCore
+    settings:
+      base:
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        GENERATE_INFOPLIST_FILE: true
+        PRODUCT_BUNDLE_IDENTIFIER: com.a-know.MarkdownDriveTests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/MarkdownDriveMac.app/Contents/MacOS/MarkdownDriveMac"
+
 schemes:
   MarkdownDriveMac:
     build:
       targets:
         MarkdownDriveMac: all
+        MarkdownDriveMacTests: [test]
+    test:
+      config: Debug
+      targets:
+        - MarkdownDriveMacTests
     run:
       config: Debug
     archive:

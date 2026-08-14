@@ -243,7 +243,10 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
         return request
     }
 
-    private func perform(_ request: URLRequest) async throws -> Data {
+    private func perform(
+        _ request: URLRequest,
+        retryAfterAuthenticationFailure: Bool = true
+    ) async throws -> Data {
         let data: Data
         let response: HTTPURLResponse
         do {
@@ -256,16 +259,44 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
             throw DriveError.networkFailure
         }
 
+        if response.statusCode == 401, retryAfterAuthenticationFailure {
+            return try await retryAuthenticatedRead(request)
+        }
         guard (200..<300).contains(response.statusCode) else {
             throw Self.error(for: response.statusCode, responseBody: data)
         }
         return data
     }
 
+    private func retryAuthenticatedRead(_ request: URLRequest) async throws -> Data {
+        guard let authorization = request.value(forHTTPHeaderField: "Authorization"),
+            authorization.hasPrefix("Bearer ")
+        else {
+            throw DriveError.authenticationRequired
+        }
+
+        let rejectedToken = AccessToken(rawValue: String(authorization.dropFirst("Bearer ".count)))
+        let refreshedToken = try await accessTokenProvider.refreshAccessToken(
+            afterRejected: rejectedToken
+        )
+        var retryRequest = request
+        retryRequest.setValue(
+            "Bearer \(refreshedToken.rawValue)",
+            forHTTPHeaderField: "Authorization"
+        )
+        return try await perform(
+            retryRequest,
+            retryAfterAuthenticationFailure: false
+        )
+    }
+
     private func performWrite(_ request: URLRequest) async throws -> DriveFileMetadata {
         let data: Data
         do {
-            data = try await perform(request)
+            data = try await perform(
+                request,
+                retryAfterAuthenticationFailure: false
+            )
         } catch DriveError.networkFailure,
             DriveError.serverUnavailable,
             DriveError.invalidResponse

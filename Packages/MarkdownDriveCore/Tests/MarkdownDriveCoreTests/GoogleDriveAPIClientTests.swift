@@ -120,6 +120,62 @@ final class GoogleDriveAPIClientTests: XCTestCase {
         }
     }
 
+    func testSafeReadRefreshesRejectedAccessTokenOnce() async throws {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(statusCode: 401, body: "{}"),
+            .success(statusCode: 200, body: fileMetadata(version: "1")),
+        ])
+        let tokenProvider = FakeDriveAccessTokenProvider(
+            refreshedToken: AccessToken(rawValue: "refreshed-access-token")
+        )
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: tokenProvider,
+            transport: transport
+        )
+
+        let item = try await client.getItem(id: "file-1")
+
+        XCTAssertEqual(item.id, "file-1")
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertEqual(
+            requests[0].value(forHTTPHeaderField: "Authorization"),
+            "Bearer fake-access-token"
+        )
+        XCTAssertEqual(
+            requests[1].value(forHTTPHeaderField: "Authorization"),
+            "Bearer refreshed-access-token"
+        )
+        let rejectedTokens = await tokenProvider.rejectedTokens
+        XCTAssertEqual(rejectedTokens, [AccessToken(rawValue: "fake-access-token")])
+    }
+
+    func testSafeReadDoesNotRetrySecondAuthenticationFailure() async {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(statusCode: 401, body: "{}"),
+            .success(statusCode: 401, body: "{}"),
+        ])
+        let tokenProvider = FakeDriveAccessTokenProvider(
+            refreshedToken: AccessToken(rawValue: "refreshed-access-token")
+        )
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: tokenProvider,
+            transport: transport
+        )
+
+        do {
+            _ = try await client.getItem(id: "file-1")
+            XCTFail("Expected repeated authentication failure")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .authenticationRequired)
+        }
+
+        let requests = await transport.requests
+        let rejectedTokens = await tokenProvider.rejectedTokens
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertEqual(rejectedTokens.count, 1)
+    }
+
     func testDownloadFileReturnsUTF8BytesAndStableRevision() async throws {
         let metadata = """
             {
@@ -258,8 +314,9 @@ final class GoogleDriveAPIClientTests: XCTestCase {
         let transport = FakeDriveHTTPTransport(responses: [
             .success(statusCode: 401, body: "{}")
         ])
+        let tokenProvider = FakeDriveAccessTokenProvider()
         let client = GoogleDriveAPIClient(
-            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            accessTokenProvider: tokenProvider,
             transport: transport
         )
 
@@ -273,6 +330,9 @@ final class GoogleDriveAPIClientTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? DriveError, .authenticationRequired)
         }
+
+        let rejectedTokens = await tokenProvider.rejectedTokens
+        XCTAssertTrue(rejectedTokens.isEmpty)
     }
 
     func testGetsRevisionAndRejectsModificationRestriction() async {
@@ -457,9 +517,23 @@ final class GoogleDriveAPIClientTests: XCTestCase {
     }
 }
 
-private struct FakeDriveAccessTokenProvider: DriveAccessTokenProvider {
+private actor FakeDriveAccessTokenProvider: DriveAccessTokenProvider {
+    private let refreshedToken: AccessToken
+    private(set) var rejectedTokens: [AccessToken] = []
+
+    init(
+        refreshedToken: AccessToken = AccessToken(rawValue: "refreshed-access-token")
+    ) {
+        self.refreshedToken = refreshedToken
+    }
+
     func validAccessToken() async throws -> AccessToken {
         AccessToken(rawValue: "fake-access-token")
+    }
+
+    func refreshAccessToken(afterRejected rejectedToken: AccessToken) async throws -> AccessToken {
+        rejectedTokens.append(rejectedToken)
+        return refreshedToken
     }
 }
 

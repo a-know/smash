@@ -3,4 +3,5 @@ public protocol AuthenticationService: Sendable {
     func signIn() async throws -> AuthenticatedSession
     func signOut() async throws
     func validAccessToken() async throws -> AccessToken
+    func refreshAccessToken(afterRejected rejectedToken: AccessToken) async throws -> AccessToken
 }

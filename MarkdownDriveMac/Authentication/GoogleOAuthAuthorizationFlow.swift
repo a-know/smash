@@ -10,7 +10,11 @@ struct GoogleAuthorizationGrant: Sendable {
     let redirectURI: URL
 }
 
-struct GoogleOAuthAuthorizationFlow: Sendable {
+protocol GoogleOAuthAuthorizationFlowProtocol: Sendable {
+    func authorize(configuration: GoogleOAuthConfiguration) async throws -> GoogleAuthorizationGrant
+}
+
+struct GoogleOAuthAuthorizationFlow: GoogleOAuthAuthorizationFlowProtocol {
     func authorize(configuration: GoogleOAuthConfiguration) async throws -> GoogleAuthorizationGrant {
         let server = try OAuthLoopbackServer()
         let codeVerifier = try randomURLSafeString(byteCount: 64)
