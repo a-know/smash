@@ -34,12 +34,13 @@ jobs:
         run: >-
           xcrun swift format lint --recursive --strict
           MarkdownDriveMac
+          MarkdownDriveMacTests
           Packages/MarkdownDriveCore
 
       - name: Test MarkdownDriveCore
         run: xcrun swift test --package-path Packages/MarkdownDriveCore
 
-      - name: Build macOS application
+      - name: Test and build macOS application
         run: >-
           xcodebuild
           -project MarkdownDrive.xcodeproj
@@ -48,4 +49,4 @@ jobs:
           -destination 'platform=macOS'
           -derivedDataPath .build/XcodeDerivedData
           CODE_SIGNING_ALLOWED=NO
-          build
+          test
