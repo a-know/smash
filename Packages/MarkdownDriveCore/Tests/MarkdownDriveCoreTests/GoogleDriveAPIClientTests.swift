@@ -508,6 +508,38 @@ final class GoogleDriveAPIClientTests: XCTestCase {
         XCTAssertEqual(metadata, ["trashed": true])
     }
 
+    func testRenamesItemWithMetadataPatchAndSharedDriveSupport() async throws {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(
+                statusCode: 200,
+                body: fileMetadata(
+                    name: "Renamed.md",
+                    version: "2",
+                    canRename: true
+                )
+            )
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        let item = try await client.renameItem(id: "file-1", name: "Renamed.md")
+
+        XCTAssertEqual(item.name, "Renamed.md")
+        XCTAssertEqual(item.capabilities?.canRename, true)
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests[0].httpMethod, "PATCH")
+        XCTAssertEqual(requests[0].url?.path, "/drive/v3/files/file-1")
+        XCTAssertEqual(queryValue(named: "supportsAllDrives", in: requests[0]), "true")
+        let body = try XCTUnwrap(requests[0].httpBody)
+        let metadata = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: body) as? [String: String]
+        )
+        XCTAssertEqual(metadata, ["name": "Renamed.md"])
+    }
+
     func testListChildrenClassifies403RateLimitReason() async {
         let transport = FakeDriveHTTPTransport(responses: [
             .success(
@@ -589,7 +621,8 @@ final class GoogleDriveAPIClientTests: XCTestCase {
         parentIDs: [String] = ["vault-root"],
         version: String,
         canDownload: Bool = true,
-        canModifyContent: Bool = true
+        canModifyContent: Bool = true,
+        canRename: Bool? = nil
     ) -> String {
         """
         {
@@ -602,7 +635,7 @@ final class GoogleDriveAPIClientTests: XCTestCase {
           "version": "\(version)",
           "capabilities": {
             "canDownload": \(canDownload),
-            "canModifyContent": \(canModifyContent)
+            "canModifyContent": \(canModifyContent)\(canRename.map { ",\n        \"canRename\": \($0)" } ?? "")
           }
         }
         """

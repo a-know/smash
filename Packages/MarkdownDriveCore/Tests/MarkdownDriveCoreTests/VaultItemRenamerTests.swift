@@ -1,0 +1,185 @@
+import XCTest
+
+@testable import MarkdownDriveCore
+
+final class VaultItemRenamerTests: XCTestCase {
+    func testRenamesMarkdownFileAndPreservesExtension() async throws {
+        let original = file(name: "Old.md", canRename: true)
+        let renamed = file(name: "New.md", canRename: true)
+        let client = FakeRenameClient(items: [original, renamed])
+        let renamer = VaultItemRenamer(driveClient: client)
+
+        let result = try await renamer.rename(
+            itemID: "note",
+            to: "New",
+            in: tree(file: original)
+        )
+
+        XCTAssertEqual(result.name, "New.md")
+        let requests = await client.renameRequests
+        XCTAssertEqual(requests, [RenameRequest(id: "note", name: "New.md")])
+    }
+
+    func testRenamesFolderWithoutAddingMarkdownExtension() async throws {
+        let original = folder(name: "Old", canRename: true)
+        let renamed = folder(name: "New", canRename: true)
+        let client = FakeRenameClient(items: [original, renamed])
+        let renamer = VaultItemRenamer(driveClient: client)
+
+        let result = try await renamer.rename(
+            itemID: "folder",
+            to: "New",
+            in: tree(folder: original)
+        )
+
+        XCTAssertEqual(result.name, "New")
+    }
+
+    func testRemoteRenameIsNotOverwritten() async {
+        let loaded = file(name: "Old.md", canRename: true)
+        let remote = file(name: "Remote.md", canRename: true)
+        let client = FakeRenameClient(items: [remote])
+        let renamer = VaultItemRenamer(driveClient: client)
+
+        do {
+            _ = try await renamer.rename(
+                itemID: "note",
+                to: "Local",
+                in: tree(file: loaded)
+            )
+            XCTFail("Expected remote rename conflict")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .itemChangedRemotely)
+        }
+        let requests = await client.renameRequests
+        XCTAssertTrue(requests.isEmpty)
+    }
+
+    func testRenameCapabilityIsHonored() async {
+        let item = file(name: "Old.md", canRename: false)
+        let client = FakeRenameClient(items: [item])
+        let renamer = VaultItemRenamer(driveClient: client)
+
+        do {
+            _ = try await renamer.rename(
+                itemID: "note",
+                to: "New",
+                in: tree(file: item)
+            )
+            XCTFail("Expected rename restriction")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .renameNotAllowed)
+        }
+        let requests = await client.renameRequests
+        XCTAssertTrue(requests.isEmpty)
+    }
+
+    func testVaultRootCannotBeRenamed() async {
+        let client = FakeRenameClient(items: [])
+        let renamer = VaultItemRenamer(driveClient: client)
+
+        do {
+            _ = try await renamer.rename(
+                itemID: "vault",
+                to: "Other",
+                in: tree()
+            )
+            XCTFail("Expected Vault root restriction")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .vaultRootModificationNotAllowed)
+        }
+    }
+
+    func testPostRenameVerificationFailureHasUnknownStatus() async {
+        let original = file(name: "Old.md", canRename: true)
+        let renamedResponse = file(name: "New.md", canRename: true)
+        let changedAgain = file(name: "Other.md", canRename: true)
+        let client = FakeRenameClient(
+            items: [original, changedAgain],
+            renameResult: renamedResponse
+        )
+        let renamer = VaultItemRenamer(driveClient: client)
+
+        do {
+            _ = try await renamer.rename(
+                itemID: "note",
+                to: "New",
+                in: tree(file: original)
+            )
+            XCTFail("Expected ambiguous rename status")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .writeStatusUnknown)
+        }
+    }
+
+    private func tree(file: DriveItem? = nil, folder: DriveItem? = nil) -> VaultTree {
+        VaultTree(
+            root: DriveTreeNode(
+                item: DriveItem(id: "vault", name: "Vault", kind: .folder),
+                children: [file, folder].compactMap { $0 }.map { DriveTreeNode(item: $0) }
+            )
+        )
+    }
+
+    private func file(name: String, canRename: Bool) -> DriveItem {
+        DriveItem(
+            id: "note",
+            name: name,
+            kind: .file,
+            mimeType: "text/markdown",
+            parentIDs: ["vault"],
+            capabilities: DriveItemCapabilities(canRename: canRename)
+        )
+    }
+
+    private func folder(name: String, canRename: Bool) -> DriveItem {
+        DriveItem(
+            id: "folder",
+            name: name,
+            kind: .folder,
+            parentIDs: ["vault"],
+            capabilities: DriveItemCapabilities(canRename: canRename)
+        )
+    }
+}
+
+private struct RenameRequest: Equatable, Sendable {
+    let id: String
+    let name: String
+}
+
+private actor FakeRenameClient: DriveItemMutationClient {
+    private var items: [DriveItem]
+    private let renameResult: DriveItem?
+    private(set) var renameRequests: [RenameRequest] = []
+
+    init(items: [DriveItem], renameResult: DriveItem? = nil) {
+        self.items = items
+        self.renameResult = renameResult
+    }
+
+    func getItem(id: String) async throws -> DriveItem {
+        guard !items.isEmpty else {
+            throw DriveError.itemNotFound
+        }
+        return items.removeFirst()
+    }
+
+    func renameItem(id: String, name: String) async throws -> DriveItem {
+        renameRequests.append(RenameRequest(id: id, name: name))
+        if let renameResult {
+            return renameResult
+        }
+        guard let current = items.first else {
+            throw DriveError.itemNotFound
+        }
+        return DriveItem(
+            id: current.id,
+            name: name,
+            kind: current.kind,
+            mimeType: current.mimeType,
+            parentIDs: current.parentIDs,
+            capabilities: current.capabilities
+        )
+    }
+}

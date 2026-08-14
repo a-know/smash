@@ -1,7 +1,7 @@
 import Foundation
 
 public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteClient,
-    DriveItemCreationClient
+    DriveItemCreationClient, DriveItemMutationClient
 {
     public static let folderMimeType = "application/vnd.google-apps.folder"
 
@@ -160,6 +160,30 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
 
         let item = try await performItemWrite(request)
         guard item.id == id, item.isTrashed else {
+            throw DriveError.writeStatusUnknown
+        }
+        return item
+    }
+
+    public func renameItem(id: String, name: String) async throws -> DriveItem {
+        let url = baseURL.appendingPathComponent("files").appendingPathComponent(id)
+        var request = try await authorizedRequest(
+            url: url,
+            queryItems: [
+                URLQueryItem(name: "supportsAllDrives", value: "true"),
+                URLQueryItem(name: "fields", value: Self.fileFields),
+            ]
+        )
+        request.httpMethod = "PATCH"
+        do {
+            request.httpBody = try JSONEncoder().encode(GoogleDriveRenameMetadata(name: name))
+        } catch {
+            throw DriveError.invalidResponse
+        }
+        request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+
+        let item = try await performItemWrite(request)
+        guard item.id == id, item.name == name, !item.isTrashed else {
             throw DriveError.writeStatusUnknown
         }
         return item
@@ -457,7 +481,7 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
     }
 
     private static let fileFields =
-        "id,name,mimeType,parents,trashed,modifiedTime,version,capabilities(canDownload,canModifyContent)"
+        "id,name,mimeType,parents,trashed,modifiedTime,version,capabilities(canDownload,canModifyContent,canRename)"
     private static let rateLimitReasons = [
         "rateLimitExceeded",
         "sharingRateLimitExceeded",
@@ -483,6 +507,10 @@ private struct GoogleDriveCreateFileMetadata: Encodable {
 
 private struct GoogleDriveTrashMetadata: Encodable {
     let trashed: Bool
+}
+
+private struct GoogleDriveRenameMetadata: Encodable {
+    let name: String
 }
 
 private struct GoogleDriveErrorDetails: Decodable {
@@ -559,7 +587,10 @@ private struct GoogleDriveFile: Decodable {
             kind: mimeType == GoogleDriveAPIClient.folderMimeType ? .folder : .file,
             mimeType: mimeType,
             parentIDs: parents,
-            isTrashed: trashed
+            isTrashed: trashed,
+            capabilities: capabilities.map {
+                DriveItemCapabilities(canRename: $0.canRename)
+            }
         )
     }
 
@@ -591,15 +622,18 @@ private struct GoogleDriveFile: Decodable {
 private struct GoogleDriveFileCapabilities: Decodable {
     let canDownload: Bool
     let canModifyContent: Bool
+    let canRename: Bool?
 
     private enum CodingKeys: String, CodingKey {
         case canDownload
         case canModifyContent
+        case canRename
     }
 
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         canDownload = try container.decodeIfPresent(Bool.self, forKey: .canDownload) ?? true
         canModifyContent = try container.decodeIfPresent(Bool.self, forKey: .canModifyContent) ?? true
+        canRename = try container.decodeIfPresent(Bool.self, forKey: .canRename)
     }
 }

@@ -31,6 +31,10 @@ public protocol DriveItemCreationClient: DriveFileCreationClient {
     func trashItem(id: String) async throws -> DriveItem
 }
 
+public protocol DriveItemMutationClient: DriveItemClient {
+    func renameItem(id: String, name: String) async throws -> DriveItem
+}
+
 public struct DriveFileRevision: Equatable, Sendable {
     public let version: String
     public let modifiedTime: Date
