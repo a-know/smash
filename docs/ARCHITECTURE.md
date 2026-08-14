@@ -22,7 +22,7 @@ The local Swift package contains:
 - Google Drive API request/response mapping;
 - Drive item, Vault, tree, revision, and Markdown document models;
 - recursive Vault tree loading and Markdown filtering;
-- Vault-boundary checks for browsing, opening, and saving;
+- Vault-boundary checks for browsing, opening, saving, and item creation;
 - UTF-8 document loading and dirty-state tracking; and
 - conflict-aware save, conflict-copy, and explicit-overwrite operations.
 
@@ -60,6 +60,16 @@ Safe Drive reads retry once when Google rejects a cached access token: authentic
 single-flight, the request is rebuilt with the refreshed token, and a second rejection requires the
 user to authenticate again. Writes are never retried after an HTTP response because their commit
 status may be ambiguous.
+
+Creating a note or folder validates the selected destination against the current Vault tree and its
+live Drive ancestor chain before sending `files.create`. Drive does not provide a documented atomic
+precondition that ties creation to the parent's current ancestry, so the app validates the returned
+item's ancestor chain again after creation. If the destination crossed the Vault boundary during the
+request, the app attempts to move only the newly created item to Drive Trash. A failed or ambiguous
+verification or cleanup is reported as an unknown write status and cannot be retried directly,
+avoiding silent duplicates. This compensation narrows the race but cannot prevent another Drive
+client from moving an ancestor after verification; later refresh, open, and mutation paths continue
+to enforce the live Vault boundary.
 
 An OAuth token permits broader Drive access than the Vault. Possession of that token or an arbitrary
 file ID is never treated as proof of Vault membership.
@@ -112,7 +122,9 @@ silently creating duplicate copies.
 
 Primary Drive references:
 
+- [Files: create](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/create)
 - [Files: update](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/update)
+- [Trash or delete files and folders](https://developers.google.com/workspace/drive/api/guides/delete)
 - [File resource (`version`)](https://developers.google.com/workspace/drive/api/reference/rest/v3/files)
 - [Manage file revisions](https://developers.google.com/workspace/drive/api/guides/manage-revisions)
 

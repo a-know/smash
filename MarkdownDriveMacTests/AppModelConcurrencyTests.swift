@@ -19,6 +19,7 @@ final class AppModelConcurrencyTests: XCTestCase {
         )
         let appModel = makeAppModel(driveClient: driveClient)
         await appModel.restoreSession()
+        appModel.setFolderExpanded(id: "vault", isExpanded: true)
 
         let olderRefresh = Task { @MainActor in
             await appModel.loadVaultTree()
@@ -32,6 +33,7 @@ final class AppModelConcurrencyTests: XCTestCase {
         }
         XCTAssertNotNil(tree.markdownFile(id: "new"))
         XCTAssertNil(tree.markdownFile(id: "old"))
+        XCTAssertEqual(appModel.expandedFolderIDs, ["vault"])
     }
 
     func testClearingSelectionInvalidatesInFlightDocumentLoad() async throws {
@@ -156,6 +158,114 @@ final class AppModelConcurrencyTests: XCTestCase {
         XCTAssertTrue(document.isDirty)
     }
 
+    func testCreatingNewNoteRefreshesTreeAndOpensCreatedFile() async throws {
+        let createdFile = file(id: "created", name: "Idea.md")
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [
+                TreeResponse(items: []),
+                TreeResponse(items: [createdFile]),
+            ],
+            controlledDownload: DriveFileDownload(
+                item: createdFile,
+                data: Data(),
+                revision: revision()
+            ),
+            fileCreationResult: .success(
+                DriveFileMetadata(item: createdFile, revision: revision())
+            )
+        )
+        let appModel = makeAppModel(driveClient: driveClient)
+        await appModel.restoreSession()
+        appModel.presentNewNote()
+
+        let creation = Task { @MainActor in
+            await appModel.createNewNote(name: "Idea", parentFolderID: "vault")
+        }
+        await driveClient.waitUntilDownloadStarts()
+        await driveClient.completeDownload()
+        await creation.value
+
+        XCTAssertFalse(appModel.isNewNotePresented)
+        XCTAssertEqual(appModel.selectedTreeItemID, "created")
+        guard case .loaded(let document) = appModel.documentState else {
+            return XCTFail("Expected the created note to open")
+        }
+        XCTAssertEqual(document.name, "Idea.md")
+        XCTAssertFalse(document.isDirty)
+    }
+
+    func testCreatingFolderWhileEditingPreservesDirtyDocument() async throws {
+        let existingFile = file(id: "note", name: "note.md")
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [
+                TreeResponse(items: [existingFile]),
+                TreeResponse(items: [
+                    existingFile,
+                    folder(id: "created-folder", name: "Drafts"),
+                ]),
+            ],
+            controlledDownload: DriveFileDownload(
+                item: existingFile,
+                data: Data("saved text".utf8),
+                revision: revision()
+            ),
+            folderCreationResult: .success(
+                DriveItem(
+                    id: "created-folder",
+                    name: "Drafts",
+                    kind: .folder,
+                    mimeType: GoogleDriveAPIClient.folderMimeType,
+                    parentIDs: ["vault"]
+                )
+            )
+        )
+        let appModel = makeAppModel(driveClient: driveClient)
+        await appModel.restoreSession()
+
+        let documentLoad = Task { @MainActor in
+            await appModel.selectTreeItem(id: "note")
+        }
+        await driveClient.waitUntilDownloadStarts()
+        await driveClient.completeDownload()
+        await documentLoad.value
+        appModel.updateDocumentText("unsaved local text")
+
+        appModel.presentNewFolder()
+        await appModel.createNewFolder(name: "Drafts", parentFolderID: "vault")
+
+        guard case .loaded(let document) = appModel.documentState else {
+            return XCTFail("Expected dirty document to remain loaded")
+        }
+        XCTAssertEqual(document.text, "unsaved local text")
+        XCTAssertTrue(document.isDirty)
+        guard case .loaded(let tree) = appModel.vaultTreeState else {
+            return XCTFail("Expected refreshed Vault tree")
+        }
+        XCTAssertTrue(tree.containsFolder(id: "created-folder"))
+    }
+
+    func testDuplicateFolderPathsAreDisambiguatedWithDriveIDs() async {
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [
+                TreeResponse(items: [
+                    folder(id: "folder-one", name: "Notes"),
+                    folder(id: "folder-two", name: "Notes"),
+                ])
+            ]
+        )
+        let appModel = makeAppModel(driveClient: driveClient)
+        await appModel.restoreSession()
+
+        XCTAssertEqual(
+            appModel.availableVaultFolders.map(\.displayPath),
+            [
+                "Vault",
+                "Vault / Notes (folder-one)",
+                "Vault / Notes (folder-two)",
+            ]
+        )
+    }
+
     private func makeAppModel(
         driveClient: ControlledAppDriveClient,
         vaultStore: any VaultStore = FakeAppVaultStore()
@@ -169,6 +279,7 @@ final class AppModelConcurrencyTests: XCTestCase {
             vaultTreeLoader: VaultTreeLoader(driveClient: driveClient),
             vaultDocumentLoader: VaultDocumentLoader(driveContentClient: driveClient),
             vaultDocumentSaver: VaultDocumentSaver(driveWriteClient: driveClient),
+            vaultItemCreator: VaultItemCreator(driveClient: driveClient),
             vaultStore: vaultStore
         )
     }
@@ -189,18 +300,26 @@ private struct TreeResponse: Sendable {
     }
 }
 
-private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWriteClient {
+private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWriteClient,
+    DriveItemCreationClient
+{
     private let controlledDownload: DriveFileDownload?
+    private let fileCreationResult: Result<DriveFileMetadata, DriveError>
+    private let folderCreationResult: Result<DriveItem, DriveError>
     private var treeResponses: [TreeResponse]
     private var downloadContinuation: CheckedContinuation<DriveFileDownload, Never>?
     private var didStartDownload = false
 
     init(
         treeResponses: [TreeResponse],
-        controlledDownload: DriveFileDownload? = nil
+        controlledDownload: DriveFileDownload? = nil,
+        fileCreationResult: Result<DriveFileMetadata, DriveError> = .failure(.itemNotFound),
+        folderCreationResult: Result<DriveItem, DriveError> = .failure(.itemNotFound)
     ) {
         self.treeResponses = treeResponses
         self.controlledDownload = controlledDownload
+        self.fileCreationResult = fileCreationResult
+        self.folderCreationResult = folderCreationResult
     }
 
     func getItem(id: String) async throws -> DriveItem {
@@ -249,6 +368,14 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         data: Data,
         mimeType: String
     ) async throws -> DriveFileMetadata {
+        try fileCreationResult.get()
+    }
+
+    func createFolder(name: String, parentID: String) async throws -> DriveItem {
+        try folderCreationResult.get()
+    }
+
+    func trashItem(id: String) async throws -> DriveItem {
         throw DriveError.itemNotFound
     }
 

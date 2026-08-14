@@ -411,6 +411,103 @@ final class GoogleDriveAPIClientTests: XCTestCase {
         }
     }
 
+    func testCreatesFolderWithMetadataOnlyRequestInRequestedParent() async throws {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(
+                statusCode: 200,
+                body: """
+                    {
+                      "id": "folder-1",
+                      "name": "Projects",
+                      "mimeType": "application/vnd.google-apps.folder",
+                      "parents": ["vault"],
+                      "trashed": false
+                    }
+                    """
+            )
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        let folder = try await client.createFolder(name: "Projects", parentID: "vault")
+
+        XCTAssertEqual(folder.id, "folder-1")
+        XCTAssertEqual(folder.kind, .folder)
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests[0].httpMethod, "POST")
+        XCTAssertEqual(requests[0].url?.path, "/drive/v3/files")
+        XCTAssertEqual(queryValue(named: "supportsAllDrives", in: requests[0]), "true")
+        XCTAssertEqual(
+            requests[0].value(forHTTPHeaderField: "Content-Type"),
+            "application/json; charset=utf-8"
+        )
+        let body = try XCTUnwrap(requests[0].httpBody)
+        let metadata = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: body) as? [String: Any]
+        )
+        XCTAssertEqual(metadata["name"] as? String, "Projects")
+        XCTAssertEqual(metadata["parents"] as? [String], ["vault"])
+        XCTAssertEqual(
+            metadata["mimeType"] as? String,
+            "application/vnd.google-apps.folder"
+        )
+    }
+
+    func testCreateFolderClassifiesServerFailureAsUnknownWriteStatus() async {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(statusCode: 503, body: "{}")
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        do {
+            _ = try await client.createFolder(name: "Projects", parentID: "vault")
+            XCTFail("Expected unknown create status")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .writeStatusUnknown)
+        }
+    }
+
+    func testTrashesItemWithMetadataPatchAndSharedDriveSupport() async throws {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(
+                statusCode: 200,
+                body: """
+                    {
+                      "id": "created-file",
+                      "name": "Idea.md",
+                      "mimeType": "text/markdown",
+                      "parents": ["outside"],
+                      "trashed": true
+                    }
+                    """
+            )
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        let item = try await client.trashItem(id: "created-file")
+
+        XCTAssertTrue(item.isTrashed)
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests[0].httpMethod, "PATCH")
+        XCTAssertEqual(requests[0].url?.path, "/drive/v3/files/created-file")
+        XCTAssertEqual(queryValue(named: "supportsAllDrives", in: requests[0]), "true")
+        let body = try XCTUnwrap(requests[0].httpBody)
+        let metadata = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: body) as? [String: Bool]
+        )
+        XCTAssertEqual(metadata, ["trashed": true])
+    }
+
     func testListChildrenClassifies403RateLimitReason() async {
         let transport = FakeDriveHTTPTransport(responses: [
             .success(

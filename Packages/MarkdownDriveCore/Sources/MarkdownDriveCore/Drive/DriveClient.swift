@@ -12,15 +12,23 @@ public protocol DriveContentClient: DriveItemClient {
     func downloadFile(id: String) async throws -> DriveFileDownload
 }
 
-public protocol DriveWriteClient: DriveItemClient {
-    func getFileMetadata(id: String) async throws -> DriveFileMetadata
-    func updateFileContent(id: String, data: Data, mimeType: String) async throws -> DriveFileMetadata
+public protocol DriveFileCreationClient: DriveItemClient {
     func createFile(
         name: String,
         parentID: String,
         data: Data,
         mimeType: String
     ) async throws -> DriveFileMetadata
+}
+
+public protocol DriveWriteClient: DriveFileCreationClient {
+    func getFileMetadata(id: String) async throws -> DriveFileMetadata
+    func updateFileContent(id: String, data: Data, mimeType: String) async throws -> DriveFileMetadata
+}
+
+public protocol DriveItemCreationClient: DriveFileCreationClient {
+    func createFolder(name: String, parentID: String) async throws -> DriveItem
+    func trashItem(id: String) async throws -> DriveItem
 }
 
 public struct DriveFileRevision: Equatable, Sendable {

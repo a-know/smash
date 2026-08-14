@@ -120,7 +120,27 @@ private struct VaultPlaceholderView: View {
         .sheet(isPresented: conflictAlert) {
             ConflictResolutionView(appModel: appModel)
         }
+        .sheet(isPresented: newNotePresentation) {
+            NewNoteView(appModel: appModel)
+        }
+        .sheet(isPresented: newFolderPresentation) {
+            NewFolderView(appModel: appModel)
+        }
         .toolbar {
+            ToolbarItem {
+                Button("New Note", systemImage: "square.and.pencil") {
+                    appModel.presentNewNote()
+                }
+                .disabled(!appModel.canCreateVaultItems)
+                .accessibilityLabel("Create Markdown note")
+            }
+            ToolbarItem {
+                Button("New Folder", systemImage: "folder.badge.plus") {
+                    appModel.presentNewFolder()
+                }
+                .disabled(!appModel.canCreateVaultItems)
+                .accessibilityLabel("Create folder in the selected Vault folder")
+            }
             ToolbarItem {
                 Button("Save", systemImage: "square.and.arrow.down") {
                     Task {
@@ -191,6 +211,28 @@ private struct VaultPlaceholderView: View {
         )
     }
 
+    private var newNotePresentation: Binding<Bool> {
+        Binding(
+            get: { appModel.isNewNotePresented },
+            set: { isPresented in
+                if !isPresented {
+                    appModel.dismissItemCreation()
+                }
+            }
+        )
+    }
+
+    private var newFolderPresentation: Binding<Bool> {
+        Binding(
+            get: { appModel.isNewFolderPresented },
+            set: { isPresented in
+                if !isPresented {
+                    appModel.dismissItemCreation()
+                }
+            }
+        )
+    }
+
     private var saveErrorAlert: Binding<Bool> {
         Binding(
             get: { appModel.isSaveErrorAlertPresented },
@@ -219,6 +261,172 @@ private struct VaultPlaceholderView: View {
             return "Save Status Unknown"
         }
         return "Save Failed"
+    }
+}
+
+private struct NewNoteView: View {
+    @ObservedObject var appModel: AppModel
+    @State private var name = "Untitled"
+    @State private var parentFolderID = ""
+    @FocusState private var isNameFocused: Bool
+
+    var body: some View {
+        Form {
+            TextField("Name", text: $name)
+                .focused($isNameFocused)
+
+            Picker("Location", selection: $parentFolderID) {
+                ForEach(appModel.availableVaultFolders) { folder in
+                    Text(folder.displayPath).tag(folder.id)
+                }
+            }
+
+            creationError
+
+            HStack {
+                Button("Cancel", role: .cancel) {
+                    appModel.dismissItemCreation()
+                }
+                Spacer()
+                Button("Create") {
+                    Task {
+                        await appModel.createNewNote(
+                            name: name,
+                            parentFolderID: parentFolderID
+                        )
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canSubmit)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+        .frame(width: 440)
+        .interactiveDismissDisabled(appModel.vaultItemCreationState == .creating)
+        .onAppear {
+            parentFolderID = appModel.defaultCreationFolderID ?? ""
+            isNameFocused = true
+        }
+    }
+
+    private var canSubmit: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !parentFolderID.isEmpty
+            && appModel.vaultItemCreationState != .creating
+            && !hasUnknownStatus
+    }
+
+    private var hasUnknownStatus: Bool {
+        if case .statusUnknown = appModel.vaultItemCreationState {
+            return true
+        }
+        return false
+    }
+
+    @ViewBuilder
+    private var creationError: some View {
+        switch appModel.vaultItemCreationState {
+        case .creating:
+            ProgressView("Creating in Google Drive…")
+        case .failed(let message):
+            Label(message, systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+        case .statusUnknown(let message):
+            VStack(alignment: .leading, spacing: 4) {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                Text("Close this dialog and refresh the Vault before trying again.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .idle:
+            EmptyView()
+        }
+    }
+}
+
+private struct NewFolderView: View {
+    @ObservedObject var appModel: AppModel
+    @State private var name = "New Folder"
+    @State private var parentFolderID = ""
+    @FocusState private var isNameFocused: Bool
+
+    var body: some View {
+        Form {
+            TextField("Name", text: $name)
+                .focused($isNameFocused)
+
+            LabeledContent("Location", value: destinationName)
+
+            creationError
+
+            HStack {
+                Button("Cancel", role: .cancel) {
+                    appModel.dismissItemCreation()
+                }
+                Spacer()
+                Button("Create") {
+                    Task {
+                        await appModel.createNewFolder(
+                            name: name,
+                            parentFolderID: parentFolderID
+                        )
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canSubmit)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+        .frame(width: 440)
+        .interactiveDismissDisabled(appModel.vaultItemCreationState == .creating)
+        .onAppear {
+            parentFolderID = appModel.defaultCreationFolderID ?? ""
+            isNameFocused = true
+        }
+    }
+
+    private var destinationName: String {
+        appModel.availableVaultFolders.first { $0.id == parentFolderID }?.displayPath ?? "Vault"
+    }
+
+    private var canSubmit: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !parentFolderID.isEmpty
+            && appModel.vaultItemCreationState != .creating
+            && !hasUnknownStatus
+    }
+
+    private var hasUnknownStatus: Bool {
+        if case .statusUnknown = appModel.vaultItemCreationState {
+            return true
+        }
+        return false
+    }
+
+    @ViewBuilder
+    private var creationError: some View {
+        switch appModel.vaultItemCreationState {
+        case .creating:
+            ProgressView("Creating in Google Drive…")
+        case .failed(let message):
+            Label(message, systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+        case .statusUnknown(let message):
+            VStack(alignment: .leading, spacing: 4) {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                Text("Close this dialog and refresh the Vault before trying again.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .idle:
+            EmptyView()
+        }
     }
 }
 
@@ -335,13 +543,7 @@ private struct VaultSidebar: View {
                     }
                 } else {
                     List(selection: treeSelection) {
-                        OutlineGroup([tree.root], children: \.outlineChildren) { node in
-                            Label(
-                                node.item.name,
-                                systemImage: node.item.kind == .folder ? "folder" : "doc.text"
-                            )
-                            .tag(node.item.id)
-                        }
+                        VaultTreeNodeRow(node: tree.root, appModel: appModel)
                     }
                     .accessibilityLabel("Vault files and folders")
                 }
@@ -377,6 +579,34 @@ private struct VaultSidebar: View {
         Binding(
             get: { appModel.isDiscardConfirmationPresented },
             set: { appModel.setDiscardConfirmationPresented($0) }
+        )
+    }
+}
+
+private struct VaultTreeNodeRow: View {
+    let node: DriveTreeNode
+    @ObservedObject var appModel: AppModel
+
+    var body: some View {
+        if node.item.kind == .folder {
+            DisclosureGroup(isExpanded: expansion) {
+                ForEach(node.children) { child in
+                    VaultTreeNodeRow(node: child, appModel: appModel)
+                }
+            } label: {
+                Label(node.item.name, systemImage: "folder")
+            }
+            .tag(node.item.id)
+        } else {
+            Label(node.item.name, systemImage: "doc.text")
+                .tag(node.item.id)
+        }
+    }
+
+    private var expansion: Binding<Bool> {
+        Binding(
+            get: { appModel.expandedFolderIDs.contains(node.item.id) },
+            set: { appModel.setFolderExpanded(id: node.item.id, isExpanded: $0) }
         )
     }
 }

@@ -33,6 +33,18 @@ enum DocumentSaveState: Equatable {
     case statusUnknown(String)
 }
 
+enum VaultItemCreationState: Equatable {
+    case idle
+    case creating
+    case failed(String)
+    case statusUnknown(String)
+}
+
+struct VaultFolderDestination: Equatable, Identifiable {
+    let id: String
+    let displayPath: String
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var authenticationState: AuthenticationState
@@ -43,17 +55,22 @@ final class AppModel: ObservableObject {
     @Published private(set) var documentState: DocumentState = .idle
     @Published private(set) var documentSaveState: DocumentSaveState = .idle
     @Published private(set) var selectedTreeItemID: String?
+    @Published private(set) var expandedFolderIDs: Set<String> = []
     @Published private(set) var pendingDocumentFileID: String?
     @Published private(set) var isDiscardConfirmationPresented = false
     @Published private(set) var isConflictAlertPresented = false
     @Published private(set) var isSaveErrorAlertPresented = false
     @Published private(set) var isVaultBrowserPresented = false
+    @Published private(set) var isNewNotePresented = false
+    @Published private(set) var isNewFolderPresented = false
+    @Published private(set) var vaultItemCreationState: VaultItemCreationState = .idle
 
     private let authenticationController: AuthenticationController
     private let driveFolderBrowser: DriveFolderBrowser
     private let vaultTreeLoader: VaultTreeLoader
     private let vaultDocumentLoader: VaultDocumentLoader
     private let vaultDocumentSaver: VaultDocumentSaver
+    private let vaultItemCreator: VaultItemCreator
     private let vaultStore: any VaultStore
     private var didAttemptRestore = false
     private var authenticationGeneration: UInt64 = 0
@@ -61,6 +78,7 @@ final class AppModel: ObservableObject {
     private var vaultBrowserLoadID: UUID?
     private var vaultTreeLoadID: UUID?
     private var documentLoadID: UUID?
+    private var vaultItemCreationID: UUID?
 
     init(
         authenticationController: AuthenticationController,
@@ -68,6 +86,7 @@ final class AppModel: ObservableObject {
         vaultTreeLoader: VaultTreeLoader,
         vaultDocumentLoader: VaultDocumentLoader,
         vaultDocumentSaver: VaultDocumentSaver,
+        vaultItemCreator: VaultItemCreator,
         vaultStore: any VaultStore,
         initialAuthenticationState: AuthenticationState = .signedOut
     ) {
@@ -76,6 +95,7 @@ final class AppModel: ObservableObject {
         self.vaultTreeLoader = vaultTreeLoader
         self.vaultDocumentLoader = vaultDocumentLoader
         self.vaultDocumentSaver = vaultDocumentSaver
+        self.vaultItemCreator = vaultItemCreator
         self.vaultStore = vaultStore
         authenticationState = initialAuthenticationState
     }
@@ -276,11 +296,160 @@ final class AppModel: ObservableObject {
         }
     }
 
+    var canCreateVaultItems: Bool {
+        guard case .signedIn = authenticationState,
+            case .loaded = vaultTreeState,
+            vaultItemCreationState != .creating
+        else {
+            return false
+        }
+        return true
+    }
+
+    var availableVaultFolders: [VaultFolderDestination] {
+        guard case .loaded(let tree) = vaultTreeState else {
+            return []
+        }
+        let destinations = Self.folderDestinations(in: tree.root, parentPath: nil)
+        let pathCounts = Dictionary(grouping: destinations, by: \.displayPath)
+            .mapValues(\.count)
+        return destinations.map { destination in
+            guard pathCounts[destination.displayPath, default: 0] > 1 else {
+                return destination
+            }
+            return VaultFolderDestination(
+                id: destination.id,
+                displayPath: "\(destination.displayPath) (\(destination.id))"
+            )
+        }
+    }
+
+    var defaultCreationFolderID: String? {
+        guard case .loaded(let tree) = vaultTreeState else {
+            return nil
+        }
+        if let selectedTreeItemID,
+            let selectedFolder = tree.folder(id: selectedTreeItemID)
+        {
+            return selectedFolder.id
+        }
+        if let selectedTreeItemID,
+            let selectedFile = tree.markdownFile(id: selectedTreeItemID),
+            let parentID = selectedFile.parentIDs.first(where: tree.containsFolder)
+        {
+            return parentID
+        }
+        return tree.root.item.id
+    }
+
+    func presentNewNote() {
+        guard canCreateVaultItems else {
+            return
+        }
+        vaultItemCreationState = .idle
+        isNewNotePresented = true
+    }
+
+    func presentNewFolder() {
+        guard canCreateVaultItems else {
+            return
+        }
+        vaultItemCreationState = .idle
+        isNewFolderPresented = true
+    }
+
+    func dismissItemCreation() {
+        guard vaultItemCreationState != .creating else {
+            return
+        }
+        vaultItemCreationID = nil
+        isNewNotePresented = false
+        isNewFolderPresented = false
+        vaultItemCreationState = .idle
+    }
+
+    func createNewNote(name: String, parentFolderID: String) async {
+        guard case .loaded(let tree) = vaultTreeState,
+            vaultItemCreationState != .creating
+        else {
+            return
+        }
+        let creationID = UUID()
+        let generation = authenticationGeneration
+        vaultItemCreationID = creationID
+        vaultItemCreationState = .creating
+
+        do {
+            let metadata = try await vaultItemCreator.createMarkdownFile(
+                name: name,
+                parentFolderID: parentFolderID,
+                in: tree
+            )
+            guard vaultItemCreationID == creationID,
+                authenticationGeneration == generation
+            else {
+                return
+            }
+            isNewNotePresented = false
+            vaultItemCreationState = .idle
+            await loadVaultTree()
+            guard vaultItemCreationID == creationID,
+                authenticationGeneration == generation,
+                !hasDirtyDocument,
+                case .loaded(let refreshedTree) = vaultTreeState,
+                refreshedTree.markdownFile(id: metadata.item.id) != nil
+            else {
+                return
+            }
+            await loadDocument(fileID: metadata.item.id, from: refreshedTree)
+        } catch {
+            handleItemCreationError(error, creationID: creationID, generation: generation)
+        }
+    }
+
+    func createNewFolder(name: String, parentFolderID: String) async {
+        guard case .loaded(let tree) = vaultTreeState,
+            vaultItemCreationState != .creating
+        else {
+            return
+        }
+        let creationID = UUID()
+        let generation = authenticationGeneration
+        vaultItemCreationID = creationID
+        vaultItemCreationState = .creating
+
+        do {
+            _ = try await vaultItemCreator.createFolder(
+                name: name,
+                parentFolderID: parentFolderID,
+                in: tree
+            )
+            guard vaultItemCreationID == creationID,
+                authenticationGeneration == generation
+            else {
+                return
+            }
+            isNewFolderPresented = false
+            vaultItemCreationState = .idle
+            await loadVaultTree()
+        } catch {
+            handleItemCreationError(error, creationID: creationID, generation: generation)
+        }
+    }
+
     var hasDirtyDocument: Bool {
         guard case .loaded(let document) = documentState else {
             return false
         }
         return document.isDirty
+    }
+
+    func setFolderExpanded(id: String, isExpanded: Bool) {
+        if isExpanded {
+            expandedFolderIDs.insert(id)
+        } else {
+            expandedFolderIDs.remove(id)
+        }
     }
 
     var canSaveDocument: Bool {
@@ -651,10 +820,45 @@ final class AppModel: ObservableObject {
         documentState = .idle
         documentSaveState = .idle
         selectedTreeItemID = nil
+        expandedFolderIDs.removeAll()
         pendingDocumentFileID = nil
         isDiscardConfirmationPresented = false
         isConflictAlertPresented = false
         isSaveErrorAlertPresented = false
+    }
+
+    private func handleItemCreationError(
+        _ error: any Error,
+        creationID: UUID,
+        generation: UInt64
+    ) {
+        guard vaultItemCreationID == creationID,
+            authenticationGeneration == generation
+        else {
+            return
+        }
+        if let driveError = error as? DriveError,
+            driveError == .writeStatusUnknown
+        {
+            vaultItemCreationState = .statusUnknown(driveError.localizedDescription)
+        } else {
+            vaultItemCreationState = .failed(error.localizedDescription)
+        }
+        transitionToReauthenticationIfNeeded(error)
+    }
+
+    private static func folderDestinations(
+        in node: DriveTreeNode,
+        parentPath: String?
+    ) -> [VaultFolderDestination] {
+        guard node.item.kind == .folder else {
+            return []
+        }
+        let path = parentPath.map { "\($0) / \(node.item.name)" } ?? node.item.name
+        return [VaultFolderDestination(id: node.item.id, displayPath: path)]
+            + node.children.flatMap {
+                folderDestinations(in: $0, parentPath: path)
+            }
     }
 
     private func cancelActiveDocumentLoad() {
@@ -711,6 +915,10 @@ final class AppModel: ObservableObject {
         isDiscardConfirmationPresented = false
         isVaultBrowserPresented = false
         vaultBrowserState = .idle
+        vaultItemCreationID = nil
+        isNewNotePresented = false
+        isNewFolderPresented = false
+        vaultItemCreationState = .idle
         if preserveDirtyDocument, documentSaveState == .saving {
             documentSaveState = .idle
         }
