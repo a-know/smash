@@ -117,7 +117,19 @@ private struct VaultPlaceholderView: View {
         .sheet(isPresented: vaultBrowserPresentation) {
             VaultFolderBrowserView(appModel: appModel)
         }
+        .sheet(isPresented: conflictAlert) {
+            ConflictResolutionView(appModel: appModel)
+        }
         .toolbar {
+            ToolbarItem {
+                Button("Save", systemImage: "square.and.arrow.down") {
+                    Task {
+                        await appModel.saveDocument()
+                    }
+                }
+                .disabled(!appModel.canSaveDocument)
+                .accessibilityLabel("Save Markdown document")
+            }
             ToolbarItem {
                 Button("Refresh", systemImage: "arrow.clockwise") {
                     Task {
@@ -148,6 +160,13 @@ private struct VaultPlaceholderView: View {
                 .accessibilityLabel("Sign out of Google")
             }
         }
+        .alert(saveAlertTitle, isPresented: saveErrorAlert) {
+            Button("OK", role: .cancel) {
+                appModel.dismissSaveErrorAlert()
+            }
+        } message: {
+            Text(saveErrorMessage)
+        }
     }
 
     private var vaultBrowserPresentation: Binding<Bool> {
@@ -159,6 +178,123 @@ private struct VaultPlaceholderView: View {
                 }
             }
         )
+    }
+
+    private var conflictAlert: Binding<Bool> {
+        Binding(
+            get: { appModel.isConflictAlertPresented },
+            set: { isPresented in
+                if !isPresented {
+                    appModel.dismissConflictAlert()
+                }
+            }
+        )
+    }
+
+    private var saveErrorAlert: Binding<Bool> {
+        Binding(
+            get: { appModel.isSaveErrorAlertPresented },
+            set: { isPresented in
+                if !isPresented {
+                    appModel.dismissSaveErrorAlert()
+                }
+            }
+        )
+    }
+
+    private var saveErrorMessage: String {
+        switch appModel.documentSaveState {
+        case .failed(let message), .reloadFailed(let message), .statusUnknown(let message):
+            message
+        default:
+            "The document could not be saved. Your local edits are still available."
+        }
+    }
+
+    private var saveAlertTitle: String {
+        if case .reloadFailed = appModel.documentSaveState {
+            return "Reload Failed"
+        }
+        if case .statusUnknown = appModel.documentSaveState {
+            return "Save Status Unknown"
+        }
+        return "Save Failed"
+    }
+}
+
+private struct ConflictResolutionView: View {
+    @ObservedObject var appModel: AppModel
+    @State private var isConfirmingOverwrite = false
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 36))
+                .foregroundStyle(.yellow)
+                .accessibilityHidden(true)
+
+            VStack(spacing: 8) {
+                Text(isConfirmingOverwrite ? "Overwrite Remote Changes?" : "Remote Changes Detected")
+                    .font(.title2.bold())
+                Text(message)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 520)
+            }
+
+            if isConfirmingOverwrite {
+                overwriteButtons
+            } else {
+                resolutionButtons
+            }
+        }
+        .padding(28)
+        .frame(width: 640)
+        .interactiveDismissDisabled()
+    }
+
+    private var message: String {
+        if isConfirmingOverwrite {
+            return "This permanently replaces the newer Google Drive content with the text currently in this editor."
+        }
+        return
+            "This file was changed on another device. Reloading will discard the unsaved text currently in the editor."
+    }
+
+    private var resolutionButtons: some View {
+        HStack {
+            Button("Cancel", role: .cancel) {
+                appModel.dismissConflictAlert()
+            }
+            Spacer()
+            Button("Reload Remote Version", role: .destructive) {
+                Task {
+                    await appModel.reloadRemoteDocumentAfterConflict()
+                }
+            }
+            Button("Save a Copy") {
+                Task {
+                    await appModel.saveConflictCopy()
+                }
+            }
+            Button("Overwrite Anyway", role: .destructive) {
+                isConfirmingOverwrite = true
+            }
+        }
+    }
+
+    private var overwriteButtons: some View {
+        HStack {
+            Button("Back", role: .cancel) {
+                isConfirmingOverwrite = false
+            }
+            Spacer()
+            Button("Overwrite Remote File", role: .destructive) {
+                Task {
+                    await appModel.overwriteConflictingDocument()
+                }
+            }
+        }
     }
 }
 
@@ -266,13 +402,19 @@ private struct MarkdownEditorDetail: View {
                             .lineLimit(1)
                         Spacer()
                         if document.isDirty {
-                            Label("Edited", systemImage: "circle.fill")
+                            Label(saveStatusText, systemImage: saveStatusSymbol)
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(saveStatusColor)
                         } else {
-                            Text("Loaded from Google Drive")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            if appModel.documentSaveState == .saved {
+                                Label("Saved", systemImage: "checkmark.circle.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("Loaded from Google Drive")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                     .padding(.horizontal, 16)
@@ -298,6 +440,45 @@ private struct MarkdownEditorDetail: View {
             },
             set: { appModel.updateDocumentText($0) }
         )
+    }
+
+    private var saveStatusText: String {
+        switch appModel.documentSaveState {
+        case .saving:
+            "Saving…"
+        case .failed:
+            "Save failed"
+        case .conflict:
+            "Remote changes detected"
+        case .reloadFailed:
+            "Reload failed"
+        case .statusUnknown:
+            "Save status unknown"
+        case .idle, .saved:
+            "Edited"
+        }
+    }
+
+    private var saveStatusSymbol: String {
+        switch appModel.documentSaveState {
+        case .saving:
+            "arrow.trianglehead.2.clockwise.rotate.90"
+        case .failed, .reloadFailed, .statusUnknown:
+            "exclamationmark.triangle.fill"
+        case .conflict:
+            "arrow.trianglehead.branch"
+        case .idle, .saved:
+            "circle.fill"
+        }
+    }
+
+    private var saveStatusColor: Color {
+        switch appModel.documentSaveState {
+        case .failed, .conflict, .reloadFailed, .statusUnknown:
+            .orange
+        case .idle, .saving, .saved:
+            .secondary
+        }
     }
 }
 

@@ -23,6 +23,16 @@ enum DocumentState: Equatable {
     case failed(fileID: String, message: String)
 }
 
+enum DocumentSaveState: Equatable {
+    case idle
+    case saving
+    case saved
+    case failed(String)
+    case conflict
+    case reloadFailed(String)
+    case statusUnknown(String)
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var authenticationState: AuthenticationState
@@ -31,15 +41,19 @@ final class AppModel: ObservableObject {
     @Published private(set) var vaultBrowserState: VaultBrowserState = .idle
     @Published private(set) var vaultTreeState: VaultTreeState = .idle
     @Published private(set) var documentState: DocumentState = .idle
+    @Published private(set) var documentSaveState: DocumentSaveState = .idle
     @Published private(set) var selectedTreeItemID: String?
     @Published private(set) var pendingDocumentFileID: String?
     @Published private(set) var isDiscardConfirmationPresented = false
+    @Published private(set) var isConflictAlertPresented = false
+    @Published private(set) var isSaveErrorAlertPresented = false
     @Published private(set) var isVaultBrowserPresented = false
 
     private let authenticationController: AuthenticationController
     private let driveFolderBrowser: DriveFolderBrowser
     private let vaultTreeLoader: VaultTreeLoader
     private let vaultDocumentLoader: VaultDocumentLoader
+    private let vaultDocumentSaver: VaultDocumentSaver
     private let vaultStore: any VaultStore
     private var didAttemptRestore = false
     private var documentLoadID: UUID?
@@ -49,6 +63,7 @@ final class AppModel: ObservableObject {
         driveFolderBrowser: DriveFolderBrowser,
         vaultTreeLoader: VaultTreeLoader,
         vaultDocumentLoader: VaultDocumentLoader,
+        vaultDocumentSaver: VaultDocumentSaver,
         vaultStore: any VaultStore,
         initialAuthenticationState: AuthenticationState = .signedOut
     ) {
@@ -56,6 +71,7 @@ final class AppModel: ObservableObject {
         self.driveFolderBrowser = driveFolderBrowser
         self.vaultTreeLoader = vaultTreeLoader
         self.vaultDocumentLoader = vaultDocumentLoader
+        self.vaultDocumentSaver = vaultDocumentSaver
         self.vaultStore = vaultStore
         authenticationState = initialAuthenticationState
     }
@@ -184,6 +200,10 @@ final class AppModel: ObservableObject {
         return document.isDirty
     }
 
+    var canSaveDocument: Bool {
+        hasDirtyDocument && documentSaveState != .saving
+    }
+
     func selectTreeItem(id: String?) async {
         guard let id else {
             selectedTreeItemID = nil
@@ -246,6 +266,238 @@ final class AppModel: ObservableObject {
         }
         document.updateText(text)
         documentState = .loaded(document)
+        switch documentSaveState {
+        case .saved, .failed, .conflict, .reloadFailed, .statusUnknown:
+            documentSaveState = .idle
+        case .idle, .saving:
+            break
+        }
+    }
+
+    func saveDocument() async {
+        guard canSaveDocument,
+            case .loaded(let document) = documentState,
+            case .loaded(let tree) = vaultTreeState
+        else {
+            return
+        }
+
+        let documentBeingSaved = document
+        documentSaveState = .saving
+        do {
+            let savedDocument = try await vaultDocumentSaver.save(
+                document: documentBeingSaved,
+                in: tree
+            )
+            guard case .loaded(var currentDocument) = documentState,
+                currentDocument.fileID == documentBeingSaved.fileID
+            else {
+                return
+            }
+            if currentDocument.text == documentBeingSaved.text {
+                currentDocument = savedDocument
+            } else {
+                currentDocument.recordSavedText(
+                    savedDocument.text,
+                    revision: savedDocument.remoteRevision
+                )
+            }
+            documentState = .loaded(currentDocument)
+            documentSaveState = currentDocument.isDirty ? .idle : .saved
+        } catch let error as DocumentSaveError {
+            handleSaveError(error, fileID: documentBeingSaved.fileID)
+        } catch {
+            handleSaveError(.unexpected, fileID: documentBeingSaved.fileID)
+        }
+    }
+
+    func dismissConflictAlert() {
+        isConflictAlertPresented = false
+    }
+
+    func reloadRemoteDocumentAfterConflict() async {
+        guard case .loaded(let document) = documentState,
+            case .loaded(let tree) = vaultTreeState
+        else {
+            dismissConflictAlert()
+            return
+        }
+        let documentBeingReloaded = document
+        isConflictAlertPresented = false
+        documentSaveState = .conflict
+
+        do {
+            let remoteDocument = try await vaultDocumentLoader.load(
+                fileID: documentBeingReloaded.fileID,
+                from: tree
+            )
+            guard case .loaded(let currentDocument) = documentState,
+                currentDocument.fileID == documentBeingReloaded.fileID
+            else {
+                return
+            }
+            guard currentDocument == documentBeingReloaded else {
+                handleReloadError(
+                    message:
+                        "The remote version was not applied because the document changed while it was loading. Your local edits are still available.",
+                    fileID: documentBeingReloaded.fileID
+                )
+                return
+            }
+
+            documentState = .loaded(remoteDocument)
+            selectedTreeItemID = remoteDocument.fileID
+            documentSaveState = .idle
+        } catch let error as AuthenticationError {
+            handleReloadError(
+                message:
+                    "The remote version could not be loaded. \(error.localizedDescription) Your local edits are still available.",
+                fileID: documentBeingReloaded.fileID,
+                authenticationError: error
+            )
+        } catch let error as DriveError {
+            let authenticationError: AuthenticationError? =
+                error == .authenticationRequired ? .reauthenticationRequired : nil
+            handleReloadError(
+                message:
+                    "The remote version could not be loaded. \(error.localizedDescription) Your local edits are still available.",
+                fileID: documentBeingReloaded.fileID,
+                authenticationError: authenticationError
+            )
+        } catch {
+            handleReloadError(
+                message:
+                    "The remote version could not be loaded. Your local edits are still available.",
+                fileID: documentBeingReloaded.fileID
+            )
+        }
+    }
+
+    func saveConflictCopy() async {
+        guard case .loaded(let document) = documentState,
+            case .loaded(let tree) = vaultTreeState
+        else {
+            dismissConflictAlert()
+            return
+        }
+
+        let documentBeingCopied = document
+        isConflictAlertPresented = false
+        documentSaveState = .saving
+        do {
+            let copy = try await vaultDocumentSaver.saveCopy(
+                document: documentBeingCopied,
+                name: Self.conflictCopyName(for: documentBeingCopied.name),
+                in: tree
+            )
+            guard case .loaded(let currentDocument) = documentState,
+                currentDocument.fileID == documentBeingCopied.fileID
+            else {
+                return
+            }
+
+            if currentDocument.text == documentBeingCopied.text {
+                documentState = .loaded(copy)
+                selectedTreeItemID = copy.fileID
+                documentSaveState = .saved
+            } else {
+                documentSaveState = .idle
+            }
+            await loadVaultTree()
+        } catch let error as DocumentSaveError {
+            handleSaveError(error, fileID: documentBeingCopied.fileID)
+        } catch {
+            handleSaveError(.unexpected, fileID: documentBeingCopied.fileID)
+        }
+    }
+
+    func overwriteConflictingDocument() async {
+        guard case .loaded(let document) = documentState,
+            case .loaded(let tree) = vaultTreeState
+        else {
+            dismissConflictAlert()
+            return
+        }
+
+        let documentBeingSaved = document
+        isConflictAlertPresented = false
+        documentSaveState = .saving
+        do {
+            let savedDocument = try await vaultDocumentSaver.overwriteRemote(
+                document: documentBeingSaved,
+                in: tree
+            )
+            guard case .loaded(var currentDocument) = documentState,
+                currentDocument.fileID == documentBeingSaved.fileID
+            else {
+                return
+            }
+            if currentDocument.text == documentBeingSaved.text {
+                currentDocument = savedDocument
+            } else {
+                currentDocument.recordSavedText(
+                    savedDocument.text,
+                    revision: savedDocument.remoteRevision
+                )
+            }
+            documentState = .loaded(currentDocument)
+            documentSaveState = currentDocument.isDirty ? .idle : .saved
+        } catch let error as DocumentSaveError {
+            handleSaveError(error, fileID: documentBeingSaved.fileID)
+        } catch {
+            handleSaveError(.unexpected, fileID: documentBeingSaved.fileID)
+        }
+    }
+
+    func dismissSaveErrorAlert() {
+        isSaveErrorAlertPresented = false
+    }
+
+    private func handleSaveError(_ error: DocumentSaveError, fileID: String) {
+        guard case .loaded(let currentDocument) = documentState,
+            currentDocument.fileID == fileID
+        else {
+            return
+        }
+
+        switch error {
+        case .authentication(let authenticationError):
+            documentSaveState = .failed(error.localizedDescription)
+            authenticationState = .failed(authenticationError)
+        case .conflict:
+            documentSaveState = .conflict
+            isConflictAlertPresented = true
+        case .updateStatusUnknown:
+            documentSaveState = .statusUnknown(error.localizedDescription)
+            isSaveErrorAlertPresented = true
+        default:
+            documentSaveState = .failed(error.localizedDescription)
+            isSaveErrorAlertPresented = true
+        }
+    }
+
+    private func handleReloadError(
+        message: String,
+        fileID: String,
+        authenticationError: AuthenticationError? = nil
+    ) {
+        guard case .loaded(let currentDocument) = documentState,
+            currentDocument.fileID == fileID
+        else {
+            return
+        }
+
+        documentSaveState = .reloadFailed(message)
+        isSaveErrorAlertPresented = true
+        if let authenticationError {
+            authenticationState = .failed(authenticationError)
+        }
+    }
+
+    private static func conflictCopyName(for originalName: String) -> String {
+        let baseName = (originalName as NSString).deletingPathExtension
+        let suffix = UUID().uuidString.prefix(8)
+        return "\(baseName) (Conflict Copy \(suffix)).md"
     }
 
     private func loadDocument(fileID: String, from tree: VaultTree) async {
@@ -253,6 +505,7 @@ final class AppModel: ObservableObject {
         documentLoadID = loadID
         selectedTreeItemID = fileID
         documentState = .loading(fileID: fileID)
+        documentSaveState = .idle
         do {
             let document = try await vaultDocumentLoader.load(fileID: fileID, from: tree)
             guard documentLoadID == loadID else {
@@ -270,8 +523,11 @@ final class AppModel: ObservableObject {
     private func clearDocument() {
         documentLoadID = nil
         documentState = .idle
+        documentSaveState = .idle
         selectedTreeItemID = nil
         pendingDocumentFileID = nil
         isDiscardConfirmationPresented = false
+        isConflictAlertPresented = false
+        isSaveErrorAlertPresented = false
     }
 }

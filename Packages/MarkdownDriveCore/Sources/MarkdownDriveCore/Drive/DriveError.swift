@@ -12,12 +12,14 @@ public enum DriveError: Error, Equatable, Sendable {
     case itemIsNotFolder
     case itemIsNotFile
     case itemNotFound
+    case modificationNotAllowed
     case networkFailure
     case permissionDenied
     case rateLimited
     case serverUnavailable
     case unexpectedStatus(Int)
     case vaultBoundaryViolation
+    case writeStatusUnknown
 }
 
 extension DriveError: LocalizedError {
@@ -45,6 +47,8 @@ extension DriveError: LocalizedError {
             "The selected Google Drive item is not a file."
         case .itemNotFound:
             "The Google Drive item could not be found."
+        case .modificationNotAllowed:
+            "Google Drive does not allow this file to be modified."
         case .networkFailure:
             "Google Drive could not be reached."
         case .permissionDenied:
@@ -57,6 +61,8 @@ extension DriveError: LocalizedError {
             "Google Drive returned HTTP status \(statusCode)."
         case .vaultBoundaryViolation:
             "That file is outside the selected Vault."
+        case .writeStatusUnknown:
+            "Google Drive may have received the write, but its result could not be confirmed."
         }
     }
 }

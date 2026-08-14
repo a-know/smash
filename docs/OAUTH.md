@@ -78,7 +78,8 @@ Ownership matters for destructive operations. A collaborator may be able to edit
 ## Token lifecycle and storage
 
 - The authorization request uses `access_type=offline` and `prompt=consent` so an installed app receives a refresh token.
-- The refresh token is stored as a generic password in macOS Keychain with `AfterFirstUnlockThisDeviceOnly` accessibility.
+- The refresh token is stored as a generic password in macOS Keychain with
+  `AfterFirstUnlockThisDeviceOnly` accessibility.
 - Access tokens are retained in memory and refreshed shortly before expiration.
 - `invalid_grant` during refresh clears the stored credential and requires interactive sign-in.
 - Sign-out first removes the local Keychain item and then makes a best-effort request to Google's revocation endpoint.
@@ -119,6 +120,18 @@ to prevent impersonation of a native app.
 
 Do not commit the local xcconfig, refresh tokens, access tokens, exported Keychain data, or downloaded
 OAuth client JSON. Never print either OAuth credential in build or application logs.
+
+The macOS target uses the repository owner's Apple Development team for a stable development code
+signature. This is important for Keychain access: the access control attached when a refresh token is
+created can recognize later builds with the same signed application identity. A contributor using a
+different team should select their own Team under **Signing & Capabilities**.
+
+Development builds created before stable code signing used the legacy service
+`com.a-know.MarkdownDrive.oauth`. The application deliberately does not read that item because its
+ad-hoc-signature access control could repeatedly prompt for the login Keychain password. The first
+updated launch requires one Google sign-in and writes the replacement under
+`com.a-know.MarkdownDrive.oauth.v2`. The old item can be removed manually from Keychain Access after
+the new sign-in succeeds.
 
 For an External consent screen whose publishing status is **Testing**, Google limits refresh tokens involving the Drive scope to seven days. Reauthentication after that interval is expected during development; it does not indicate a Keychain or refresh implementation failure. See [Google's refresh token expiration rules](https://developers.google.com/identity/protocols/oauth2#expiration).
 

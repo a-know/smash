@@ -199,6 +199,158 @@ final class GoogleDriveAPIClientTests: XCTestCase {
         XCTAssertEqual(requests.count, 1)
     }
 
+    func testUpdatesSameDriveFileWithSimpleMediaPatch() async throws {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(statusCode: 200, body: fileMetadata(version: "2"))
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        let metadata = try await client.updateFileContent(
+            id: "file-1",
+            data: Data("# Updated\n".utf8),
+            mimeType: "text/markdown; charset=utf-8"
+        )
+
+        XCTAssertEqual(metadata.item.id, "file-1")
+        XCTAssertEqual(metadata.revision.version, "2")
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests[0].httpMethod, "PATCH")
+        XCTAssertEqual(requests[0].url?.host, "www.googleapis.com")
+        XCTAssertEqual(requests[0].url?.path, "/upload/drive/v3/files/file-1")
+        XCTAssertEqual(
+            requests[0].value(forHTTPHeaderField: "Authorization"),
+            "Bearer fake-access-token"
+        )
+        XCTAssertEqual(queryValue(named: "uploadType", in: requests[0]), "media")
+        XCTAssertEqual(requests[0].httpBody, Data("# Updated\n".utf8))
+        XCTAssertEqual(
+            requests[0].value(forHTTPHeaderField: "Content-Type"),
+            "text/markdown; charset=utf-8"
+        )
+    }
+
+    func testUpdateClassifiesServerFailureAsUnknownWriteStatus() async {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(statusCode: 503, body: "{}")
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        do {
+            _ = try await client.updateFileContent(
+                id: "file-1",
+                data: Data("new text".utf8),
+                mimeType: "text/markdown"
+            )
+            XCTFail("Expected unknown write status")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .writeStatusUnknown)
+        }
+    }
+
+    func testUpdateKeepsAuthenticationFailureDefinite() async {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(statusCode: 401, body: "{}")
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        do {
+            _ = try await client.updateFileContent(
+                id: "file-1",
+                data: Data("new text".utf8),
+                mimeType: "text/markdown"
+            )
+            XCTFail("Expected authentication failure")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .authenticationRequired)
+        }
+    }
+
+    func testGetsRevisionAndRejectsModificationRestriction() async {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(
+                statusCode: 200,
+                body: fileMetadata(version: "1", canModifyContent: false)
+            )
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        do {
+            _ = try await client.getFileMetadata(id: "file-1")
+            XCTFail("Expected modification restriction")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .modificationNotAllowed)
+        }
+    }
+
+    func testCreatesConflictCopyWithMultipartUploadInRequestedParent() async throws {
+        let createdMetadata = fileMetadata(
+            id: "copy-1",
+            name: "memo (Conflict Copy).md",
+            parentIDs: ["vault"],
+            version: "1"
+        )
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(statusCode: 200, body: createdMetadata)
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        let metadata = try await client.createFile(
+            name: "memo (Conflict Copy).md",
+            parentID: "vault",
+            data: Data("local text".utf8),
+            mimeType: "text/markdown; charset=utf-8"
+        )
+
+        XCTAssertEqual(metadata.item.id, "copy-1")
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests[0].httpMethod, "POST")
+        XCTAssertEqual(requests[0].url?.path, "/upload/drive/v3/files")
+        XCTAssertEqual(queryValue(named: "uploadType", in: requests[0]), "multipart")
+        let body = String(decoding: requests[0].httpBody ?? Data(), as: UTF8.self)
+        XCTAssertTrue(body.contains(#""name":"memo (Conflict Copy).md""#))
+        XCTAssertTrue(body.contains(#""parents":["vault"]"#))
+        XCTAssertTrue(body.contains("local text"))
+    }
+
+    func testCreateClassifiesMalformedSuccessAsUnknownWriteStatus() async {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(statusCode: 200, body: "not-json")
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        do {
+            _ = try await client.createFile(
+                name: "copy.md",
+                parentID: "vault",
+                data: Data("local text".utf8),
+                mimeType: "text/markdown"
+            )
+            XCTFail("Expected unknown write status")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .writeStatusUnknown)
+        }
+    }
+
     func testListChildrenClassifies403RateLimitReason() async {
         let transport = FakeDriveHTTPTransport(responses: [
             .success(
@@ -274,19 +426,34 @@ final class GoogleDriveAPIClientTests: XCTestCase {
             .queryItems?.first(where: { $0.name == name })?.value
     }
 
-    private func fileMetadata(version: String, canDownload: Bool = true) -> String {
+    private func fileMetadata(
+        id: String = "file-1",
+        name: String = "memo.md",
+        parentIDs: [String] = ["vault-root"],
+        version: String,
+        canDownload: Bool = true,
+        canModifyContent: Bool = true
+    ) -> String {
         """
         {
-          "id": "file-1",
-          "name": "memo.md",
+          "id": "\(id)",
+          "name": "\(name)",
           "mimeType": "text/markdown",
-          "parents": ["vault-root"],
+          "parents": \(jsonArray(parentIDs)),
           "trashed": false,
           "modifiedTime": "2026-08-12T12:34:56Z",
           "version": "\(version)",
-          "capabilities": { "canDownload": \(canDownload) }
+          "capabilities": {
+            "canDownload": \(canDownload),
+            "canModifyContent": \(canModifyContent)
+          }
         }
         """
+    }
+
+    private func jsonArray(_ strings: [String]) -> String {
+        let data = try! JSONEncoder().encode(strings)
+        return String(decoding: data, as: UTF8.self)
     }
 }
 

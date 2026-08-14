@@ -1,20 +1,23 @@
 import Foundation
 
-public struct GoogleDriveAPIClient: DriveClient, DriveContentClient {
+public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteClient {
     public static let folderMimeType = "application/vnd.google-apps.folder"
 
     private let accessTokenProvider: any DriveAccessTokenProvider
     private let transport: any DriveHTTPTransport
     private let baseURL: URL
+    private let uploadBaseURL: URL
 
     public init(
         accessTokenProvider: any DriveAccessTokenProvider,
         transport: any DriveHTTPTransport = URLSessionDriveHTTPTransport(),
-        baseURL: URL = URL(string: "https://www.googleapis.com/drive/v3")!
+        baseURL: URL = URL(string: "https://www.googleapis.com/drive/v3")!,
+        uploadBaseURL: URL = URL(string: "https://www.googleapis.com/upload/drive/v3")!
     ) {
         self.accessTokenProvider = accessTokenProvider
         self.transport = transport
         self.baseURL = baseURL
+        self.uploadBaseURL = uploadBaseURL
     }
 
     public func getItem(id: String) async throws -> DriveItem {
@@ -51,6 +54,65 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient {
             data: data,
             revision: revisionAfterDownload
         )
+    }
+
+    public func getFileMetadata(id: String) async throws -> DriveFileMetadata {
+        let file = try await getFileResource(id: id)
+        try validateModification(file)
+        return try file.metadata
+    }
+
+    public func updateFileContent(
+        id: String,
+        data: Data,
+        mimeType: String
+    ) async throws -> DriveFileMetadata {
+        let url = uploadBaseURL.appendingPathComponent("files").appendingPathComponent(id)
+        var request = try await authorizedRequest(
+            url: url,
+            queryItems: [
+                URLQueryItem(name: "uploadType", value: "media"),
+                URLQueryItem(name: "supportsAllDrives", value: "true"),
+                URLQueryItem(name: "fields", value: Self.fileFields),
+            ]
+        )
+        request.httpMethod = "PATCH"
+        request.httpBody = data
+        request.setValue(mimeType, forHTTPHeaderField: "Content-Type")
+
+        return try await performWrite(request)
+    }
+
+    public func createFile(
+        name: String,
+        parentID: String,
+        data: Data,
+        mimeType: String
+    ) async throws -> DriveFileMetadata {
+        let boundary = "MarkdownDrive-\(UUID().uuidString)"
+        let url = uploadBaseURL.appendingPathComponent("files")
+        var request = try await authorizedRequest(
+            url: url,
+            queryItems: [
+                URLQueryItem(name: "uploadType", value: "multipart"),
+                URLQueryItem(name: "supportsAllDrives", value: "true"),
+                URLQueryItem(name: "fields", value: Self.fileFields),
+            ]
+        )
+        request.httpMethod = "POST"
+        request.httpBody = try multipartBody(
+            name: name,
+            parentID: parentID,
+            data: data,
+            mimeType: mimeType,
+            boundary: boundary
+        )
+        request.setValue(
+            "multipart/related; boundary=\(boundary)",
+            forHTTPHeaderField: "Content-Type"
+        )
+
+        return try await performWrite(request)
     }
 
     public func listChildren(of folderID: String) async throws -> [DriveItem] {
@@ -124,6 +186,44 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient {
         }
     }
 
+    private func validateModification(_ file: GoogleDriveFile) throws {
+        guard file.mimeType != Self.folderMimeType else {
+            throw DriveError.itemIsNotFile
+        }
+        guard !file.trashed else {
+            throw DriveError.itemNotFound
+        }
+        guard file.capabilities?.canModifyContent != false else {
+            throw DriveError.modificationNotAllowed
+        }
+    }
+
+    private func multipartBody(
+        name: String,
+        parentID: String,
+        data: Data,
+        mimeType: String,
+        boundary: String
+    ) throws -> Data {
+        let metadata = GoogleDriveCreateFileMetadata(name: name, parents: [parentID])
+        let metadataData: Data
+        do {
+            metadataData = try JSONEncoder().encode(metadata)
+        } catch {
+            throw DriveError.invalidResponse
+        }
+
+        var body = Data()
+        body.append(Data("--\(boundary)\r\n".utf8))
+        body.append(Data("Content-Type: application/json; charset=UTF-8\r\n\r\n".utf8))
+        body.append(metadataData)
+        body.append(Data("\r\n--\(boundary)\r\n".utf8))
+        body.append(Data("Content-Type: \(mimeType)\r\n\r\n".utf8))
+        body.append(data)
+        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+        return body
+    }
+
     private func authorizedRequest(
         url: URL,
         queryItems: [URLQueryItem]
@@ -160,6 +260,27 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient {
             throw Self.error(for: response.statusCode, responseBody: data)
         }
         return data
+    }
+
+    private func performWrite(_ request: URLRequest) async throws -> DriveFileMetadata {
+        let data: Data
+        do {
+            data = try await perform(request)
+        } catch DriveError.networkFailure,
+            DriveError.serverUnavailable,
+            DriveError.invalidResponse
+        {
+            throw DriveError.writeStatusUnknown
+        }
+
+        do {
+            let file = try decodeFile(from: data)
+            try validateModification(file)
+            return try file.metadata
+        } catch {
+            // A successful HTTP response means Drive may already have committed the write.
+            throw DriveError.writeStatusUnknown
+        }
     }
 
     private func decodeFile(from data: Data) throws -> GoogleDriveFile {
@@ -215,7 +336,7 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient {
     }
 
     private static let fileFields =
-        "id,name,mimeType,parents,trashed,modifiedTime,version,capabilities(canDownload)"
+        "id,name,mimeType,parents,trashed,modifiedTime,version,capabilities(canDownload,canModifyContent)"
     private static let rateLimitReasons = [
         "rateLimitExceeded",
         "sharingRateLimitExceeded",
@@ -225,6 +346,11 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient {
 
 private struct GoogleDriveErrorEnvelope: Decodable {
     let error: GoogleDriveErrorDetails
+}
+
+private struct GoogleDriveCreateFileMetadata: Encodable {
+    let name: String
+    let parents: [String]
 }
 
 private struct GoogleDriveErrorDetails: Decodable {
@@ -312,6 +438,15 @@ private struct GoogleDriveFile: Decodable {
         return DriveFileRevision(version: version, modifiedTime: modifiedTime)
     }
 
+    var metadata: DriveFileMetadata {
+        get throws {
+            guard let revision else {
+                throw DriveError.invalidResponse
+            }
+            return DriveFileMetadata(item: driveItem, revision: revision)
+        }
+    }
+
     private static func parseModifiedTime(_ value: String) -> Date? {
         let fractionalStyle = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
         if let date = try? Date(value, strategy: fractionalStyle) {
@@ -323,4 +458,16 @@ private struct GoogleDriveFile: Decodable {
 
 private struct GoogleDriveFileCapabilities: Decodable {
     let canDownload: Bool
+    let canModifyContent: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case canDownload
+        case canModifyContent
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        canDownload = try container.decodeIfPresent(Bool.self, forKey: .canDownload) ?? true
+        canModifyContent = try container.decodeIfPresent(Bool.self, forKey: .canModifyContent) ?? true
+    }
 }

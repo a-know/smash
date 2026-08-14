@@ -19,9 +19,8 @@ public actor VaultDocumentLoader {
         else {
             throw DriveError.itemIsNotFile
         }
-        guard download.item.parentIDs.contains(where: tree.containsFolder(id:)) else {
-            throw DriveError.vaultBoundaryViolation
-        }
+        _ = try await VaultBoundaryValidator(driveItemClient: driveContentClient)
+            .currentParentID(of: download.item, in: tree)
         guard let text = String(data: download.data, encoding: .utf8) else {
             throw DriveError.invalidUTF8
         }

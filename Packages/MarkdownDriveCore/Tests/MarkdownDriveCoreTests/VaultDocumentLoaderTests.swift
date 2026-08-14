@@ -47,6 +47,25 @@ final class VaultDocumentLoaderTests: XCTestCase {
         XCTAssertFalse(document.isDirty)
     }
 
+    func testDocumentCanRecordSavedSnapshotWhileNewerEditsRemainDirty() {
+        let initialRevision = makeRevision()
+        var document = MarkdownDocument(
+            fileID: "note",
+            name: "note.md",
+            text: "original",
+            remoteRevision: initialRevision
+        )
+        document.updateText("text sent to Drive")
+        document.updateText("newer local edits")
+        let savedRevision = DriveFileRevision(version: "2", modifiedTime: Date())
+
+        document.recordSavedText("text sent to Drive", revision: savedRevision)
+
+        XCTAssertEqual(document.text, "newer local edits")
+        XCTAssertEqual(document.remoteRevision, savedRevision)
+        XCTAssertTrue(document.isDirty)
+    }
+
     func testRejectsArbitraryFileIDBeforeDownloading() async {
         let client = FakeDriveContentClient(result: .failure(.itemNotFound))
         let loader = VaultDocumentLoader(driveContentClient: client)
@@ -77,6 +96,33 @@ final class VaultDocumentLoaderTests: XCTestCase {
         do {
             _ = try await loader.load(fileID: "note", from: makeTree())
             XCTFail("Expected Vault boundary violation")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .vaultBoundaryViolation)
+        }
+    }
+
+    func testRejectsFileWhoseAncestorMovedOutsideVaultAfterTreeWasLoaded() async {
+        let movedFolder = DriveItem(
+            id: "nested",
+            name: "nested",
+            kind: .folder,
+            parentIDs: ["outside-folder"]
+        )
+        let client = FakeDriveContentClient(
+            result: .success(
+                DriveFileDownload(
+                    item: file(id: "note", parentIDs: ["nested"]),
+                    data: Data("remote text".utf8),
+                    revision: makeRevision()
+                )
+            ),
+            itemResults: ["nested": .success(movedFolder)]
+        )
+        let loader = VaultDocumentLoader(driveContentClient: client)
+
+        do {
+            _ = try await loader.load(fileID: "note", from: makeTree())
+            XCTFail("Expected moved ancestor to violate the Vault boundary")
         } catch {
             XCTAssertEqual(error as? DriveError, .vaultBoundaryViolation)
         }
@@ -140,10 +186,29 @@ final class VaultDocumentLoaderTests: XCTestCase {
 
 private actor FakeDriveContentClient: DriveContentClient {
     private let result: Result<DriveFileDownload, DriveError>
+    private let itemResults: [String: Result<DriveItem, DriveError>]
     private var requestedFileIDs: [String] = []
 
-    init(result: Result<DriveFileDownload, DriveError>) {
+    init(
+        result: Result<DriveFileDownload, DriveError>,
+        itemResults: [String: Result<DriveItem, DriveError>]? = nil
+    ) {
         self.result = result
+        self.itemResults =
+            itemResults ?? [
+                "nested": .success(
+                    DriveItem(
+                        id: "nested",
+                        name: "nested",
+                        kind: .folder,
+                        parentIDs: ["vault"]
+                    )
+                )
+            ]
+    }
+
+    func getItem(id: String) async throws -> DriveItem {
+        try itemResults[id, default: .failure(.itemNotFound)].get()
     }
 
     func downloadFile(id: String) async throws -> DriveFileDownload {
