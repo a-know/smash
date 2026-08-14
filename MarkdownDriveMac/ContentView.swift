@@ -126,6 +126,9 @@ private struct VaultPlaceholderView: View {
         .sheet(isPresented: newFolderPresentation) {
             NewFolderView(appModel: appModel)
         }
+        .sheet(isPresented: renamePresentation) {
+            RenameItemView(appModel: appModel)
+        }
         .toolbar {
             ToolbarItem {
                 Button("New Note", systemImage: "square.and.pencil") {
@@ -140,6 +143,13 @@ private struct VaultPlaceholderView: View {
                 }
                 .disabled(!appModel.canCreateVaultItems)
                 .accessibilityLabel("Create folder in the selected Vault folder")
+            }
+            ToolbarItem {
+                Button("Rename", systemImage: "pencil") {
+                    appModel.presentRenameSelectedItem()
+                }
+                .disabled(!appModel.canRenameSelectedItem)
+                .accessibilityLabel("Rename selected Vault item")
             }
             ToolbarItem {
                 Button("Save", systemImage: "square.and.arrow.down") {
@@ -233,6 +243,17 @@ private struct VaultPlaceholderView: View {
         )
     }
 
+    private var renamePresentation: Binding<Bool> {
+        Binding(
+            get: { appModel.isRenamePresented },
+            set: { isPresented in
+                if !isPresented {
+                    appModel.dismissRename()
+                }
+            }
+        )
+    }
+
     private var saveErrorAlert: Binding<Bool> {
         Binding(
             get: { appModel.isSaveErrorAlertPresented },
@@ -261,6 +282,84 @@ private struct VaultPlaceholderView: View {
             return "Save Status Unknown"
         }
         return "Save Failed"
+    }
+}
+
+private struct RenameItemView: View {
+    @ObservedObject var appModel: AppModel
+    @State private var name = ""
+    @FocusState private var isNameFocused: Bool
+
+    var body: some View {
+        Form {
+            TextField("Name", text: $name)
+                .focused($isNameFocused)
+
+            renameStatus
+
+            HStack {
+                Button("Cancel", role: .cancel) {
+                    appModel.dismissRename()
+                }
+                Spacer()
+                Button("Rename") {
+                    Task {
+                        await appModel.renameTarget(to: name)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canSubmit)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+        .frame(width: 440)
+        .interactiveDismissDisabled(appModel.vaultItemRenameState == .renaming)
+        .onAppear {
+            guard let item = appModel.renameTargetItem else {
+                return
+            }
+            name =
+                item.kind == .file
+                ? (item.name as NSString).deletingPathExtension
+                : item.name
+            isNameFocused = true
+        }
+    }
+
+    private var canSubmit: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && appModel.vaultItemRenameState != .renaming
+            && !hasUnknownStatus
+    }
+
+    private var hasUnknownStatus: Bool {
+        if case .statusUnknown = appModel.vaultItemRenameState {
+            return true
+        }
+        return false
+    }
+
+    @ViewBuilder
+    private var renameStatus: some View {
+        switch appModel.vaultItemRenameState {
+        case .renaming:
+            ProgressView("Renaming in Google Drive…")
+        case .failed(let message):
+            Label(message, systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+        case .statusUnknown(let message):
+            VStack(alignment: .leading, spacing: 4) {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                Text("Close this dialog and refresh the Vault before trying again.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .idle:
+            EmptyView()
+        }
     }
 }
 
@@ -597,9 +696,15 @@ private struct VaultTreeNodeRow: View {
                 Label(node.item.name, systemImage: "folder")
             }
             .tag(node.item.id)
+            .contextMenu {
+                renameButton
+            }
         } else {
             Label(node.item.name, systemImage: "doc.text")
                 .tag(node.item.id)
+                .contextMenu {
+                    renameButton
+                }
         }
     }
 
@@ -608,6 +713,13 @@ private struct VaultTreeNodeRow: View {
             get: { appModel.expandedFolderIDs.contains(node.item.id) },
             set: { appModel.setFolderExpanded(id: node.item.id, isExpanded: $0) }
         )
+    }
+
+    private var renameButton: some View {
+        Button("Rename…") {
+            appModel.presentRename(itemID: node.item.id)
+        }
+        .disabled(node.item.id == appModel.selectedVault?.rootFolderID)
     }
 }
 

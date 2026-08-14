@@ -244,6 +244,58 @@ final class AppModelConcurrencyTests: XCTestCase {
         XCTAssertTrue(tree.containsFolder(id: "created-folder"))
     }
 
+    func testRenamingOpenFilePreservesDirtyTextAndCanSaveWithoutFalseConflict() async throws {
+        let existingFile = file(id: "note", name: "note.md")
+        let renamedFile = file(id: "note", name: "Renamed.md")
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [
+                TreeResponse(items: [existingFile]),
+                TreeResponse(items: [renamedFile]),
+            ],
+            controlledDownload: DriveFileDownload(
+                item: existingFile,
+                data: Data("saved text".utf8),
+                revision: revision()
+            )
+        )
+        let appModel = makeAppModel(driveClient: driveClient)
+        await appModel.restoreSession()
+
+        let documentLoad = Task { @MainActor in
+            await appModel.selectTreeItem(id: "note")
+        }
+        await driveClient.waitUntilDownloadStarts()
+        await driveClient.completeDownload()
+        await documentLoad.value
+        appModel.updateDocumentText("unsaved local text")
+
+        appModel.presentRename(itemID: "note")
+        await appModel.renameTarget(to: "Renamed")
+
+        XCTAssertFalse(appModel.isRenamePresented)
+        guard case .loaded(let document) = appModel.documentState else {
+            return XCTFail("Expected dirty document to remain loaded")
+        }
+        XCTAssertEqual(document.name, "Renamed.md")
+        XCTAssertEqual(document.text, "unsaved local text")
+        XCTAssertEqual(document.remoteRevision.version, "2")
+        XCTAssertTrue(document.isDirty)
+        guard case .loaded(let tree) = appModel.vaultTreeState else {
+            return XCTFail("Expected refreshed Vault tree")
+        }
+        XCTAssertEqual(tree.markdownFile(id: "note")?.name, "Renamed.md")
+
+        await appModel.saveDocument()
+
+        guard case .loaded(let savedDocument) = appModel.documentState else {
+            return XCTFail("Expected renamed document to remain loaded after save")
+        }
+        XCTAssertEqual(savedDocument.name, "Renamed.md")
+        XCTAssertEqual(savedDocument.text, "unsaved local text")
+        XCTAssertEqual(savedDocument.remoteRevision.version, "3")
+        XCTAssertFalse(savedDocument.isDirty)
+    }
+
     func testDuplicateFolderPathsAreDisambiguatedWithDriveIDs() async {
         let driveClient = ControlledAppDriveClient(
             treeResponses: [
@@ -280,6 +332,7 @@ final class AppModelConcurrencyTests: XCTestCase {
             vaultDocumentLoader: VaultDocumentLoader(driveContentClient: driveClient),
             vaultDocumentSaver: VaultDocumentSaver(driveWriteClient: driveClient),
             vaultItemCreator: VaultItemCreator(driveClient: driveClient),
+            vaultItemRenamer: VaultItemRenamer(driveClient: driveClient),
             vaultStore: vaultStore
         )
     }
@@ -301,11 +354,12 @@ private struct TreeResponse: Sendable {
 }
 
 private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWriteClient,
-    DriveItemCreationClient
+    DriveItemCreationClient, DriveItemMutationClient
 {
     private let controlledDownload: DriveFileDownload?
     private let fileCreationResult: Result<DriveFileMetadata, DriveError>
     private let folderCreationResult: Result<DriveItem, DriveError>
+    private var renamedItems: [String: DriveItem] = [:]
     private var treeResponses: [TreeResponse]
     private var downloadContinuation: CheckedContinuation<DriveFileDownload, Never>?
     private var didStartDownload = false
@@ -325,6 +379,9 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     func getItem(id: String) async throws -> DriveItem {
         if id == "vault" {
             return folder(id: "vault", name: "Vault")
+        }
+        if let renamedItem = renamedItems[id] {
+            return renamedItem
         }
         return file(id: id, name: "\(id).md")
     }
@@ -351,7 +408,16 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     }
 
     func getFileMetadata(id: String) async throws -> DriveFileMetadata {
-        throw DriveError.itemNotFound
+        guard let item = renamedItems[id] else {
+            throw DriveError.itemNotFound
+        }
+        return DriveFileMetadata(
+            item: item,
+            revision: DriveFileRevision(
+                version: "2",
+                modifiedTime: Date(timeIntervalSince1970: 1_700_000_001)
+            )
+        )
     }
 
     func updateFileContent(
@@ -359,7 +425,16 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         data: Data,
         mimeType: String
     ) async throws -> DriveFileMetadata {
-        throw DriveError.itemNotFound
+        guard let item = renamedItems[id] else {
+            throw DriveError.itemNotFound
+        }
+        return DriveFileMetadata(
+            item: item,
+            revision: DriveFileRevision(
+                version: "3",
+                modifiedTime: Date(timeIntervalSince1970: 1_700_000_002)
+            )
+        )
     }
 
     func createFile(
@@ -377,6 +452,18 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
 
     func trashItem(id: String) async throws -> DriveItem {
         throw DriveError.itemNotFound
+    }
+
+    func renameItem(id: String, name: String) async throws -> DriveItemRenameResult {
+        let item = file(id: id, name: name)
+        renamedItems[id] = item
+        return DriveItemRenameResult(
+            item: item,
+            revision: DriveFileRevision(
+                version: "2",
+                modifiedTime: Date(timeIntervalSince1970: 1_700_000_001)
+            )
+        )
     }
 
     func waitUntilDownloadStarts() async {

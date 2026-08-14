@@ -524,10 +524,11 @@ final class GoogleDriveAPIClientTests: XCTestCase {
             transport: transport
         )
 
-        let item = try await client.renameItem(id: "file-1", name: "Renamed.md")
+        let result = try await client.renameItem(id: "file-1", name: "Renamed.md")
 
-        XCTAssertEqual(item.name, "Renamed.md")
-        XCTAssertEqual(item.capabilities?.canRename, true)
+        XCTAssertEqual(result.item.name, "Renamed.md")
+        XCTAssertEqual(result.item.capabilities?.canRename, true)
+        XCTAssertEqual(result.revision?.version, "2")
         let requests = await transport.requests
         XCTAssertEqual(requests.count, 1)
         XCTAssertEqual(requests[0].httpMethod, "PATCH")

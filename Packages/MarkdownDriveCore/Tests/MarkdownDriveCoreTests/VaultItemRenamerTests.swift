@@ -15,7 +15,8 @@ final class VaultItemRenamerTests: XCTestCase {
             in: tree(file: original)
         )
 
-        XCTAssertEqual(result.name, "New.md")
+        XCTAssertEqual(result.item.name, "New.md")
+        XCTAssertEqual(result.revision, revision())
         let requests = await client.renameRequests
         XCTAssertEqual(requests, [RenameRequest(id: "note", name: "New.md")])
     }
@@ -32,7 +33,7 @@ final class VaultItemRenamerTests: XCTestCase {
             in: tree(folder: original)
         )
 
-        XCTAssertEqual(result.name, "New")
+        XCTAssertEqual(result.item.name, "New")
     }
 
     func testRemoteRenameIsNotOverwritten() async {
@@ -96,7 +97,7 @@ final class VaultItemRenamerTests: XCTestCase {
         let changedAgain = file(name: "Other.md", canRename: true)
         let client = FakeRenameClient(
             items: [original, changedAgain],
-            renameResult: renamedResponse
+            renameResult: DriveItemRenameResult(item: renamedResponse, revision: revision())
         )
         let renamer = VaultItemRenamer(driveClient: client)
 
@@ -141,6 +142,10 @@ final class VaultItemRenamerTests: XCTestCase {
             capabilities: DriveItemCapabilities(canRename: canRename)
         )
     }
+
+    private func revision() -> DriveFileRevision {
+        DriveFileRevision(version: "2", modifiedTime: .distantPast)
+    }
 }
 
 private struct RenameRequest: Equatable, Sendable {
@@ -150,10 +155,10 @@ private struct RenameRequest: Equatable, Sendable {
 
 private actor FakeRenameClient: DriveItemMutationClient {
     private var items: [DriveItem]
-    private let renameResult: DriveItem?
+    private let renameResult: DriveItemRenameResult?
     private(set) var renameRequests: [RenameRequest] = []
 
-    init(items: [DriveItem], renameResult: DriveItem? = nil) {
+    init(items: [DriveItem], renameResult: DriveItemRenameResult? = nil) {
         self.items = items
         self.renameResult = renameResult
     }
@@ -165,7 +170,7 @@ private actor FakeRenameClient: DriveItemMutationClient {
         return items.removeFirst()
     }
 
-    func renameItem(id: String, name: String) async throws -> DriveItem {
+    func renameItem(id: String, name: String) async throws -> DriveItemRenameResult {
         renameRequests.append(RenameRequest(id: id, name: name))
         if let renameResult {
             return renameResult
@@ -173,13 +178,18 @@ private actor FakeRenameClient: DriveItemMutationClient {
         guard let current = items.first else {
             throw DriveError.itemNotFound
         }
-        return DriveItem(
-            id: current.id,
-            name: name,
-            kind: current.kind,
-            mimeType: current.mimeType,
-            parentIDs: current.parentIDs,
-            capabilities: current.capabilities
+        return DriveItemRenameResult(
+            item: DriveItem(
+                id: current.id,
+                name: name,
+                kind: current.kind,
+                mimeType: current.mimeType,
+                parentIDs: current.parentIDs,
+                capabilities: current.capabilities
+            ),
+            revision: current.kind == .file
+                ? DriveFileRevision(version: "2", modifiedTime: .distantPast)
+                : nil
         )
     }
 }

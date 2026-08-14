@@ -32,7 +32,17 @@ public protocol DriveItemCreationClient: DriveFileCreationClient {
 }
 
 public protocol DriveItemMutationClient: DriveItemClient {
-    func renameItem(id: String, name: String) async throws -> DriveItem
+    func renameItem(id: String, name: String) async throws -> DriveItemRenameResult
+}
+
+public struct DriveItemRenameResult: Equatable, Sendable {
+    public let item: DriveItem
+    public let revision: DriveFileRevision?
+
+    public init(item: DriveItem, revision: DriveFileRevision?) {
+        self.item = item
+        self.revision = revision
+    }
 }
 
 public struct DriveFileRevision: Equatable, Sendable {

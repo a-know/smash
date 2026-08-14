@@ -71,6 +71,14 @@ avoiding silent duplicates. This compensation narrows the race but cannot preven
 client from moving an ancestor after verification; later refresh, open, and mutation paths continue
 to enforce the live Vault boundary.
 
+Renaming a note or folder re-fetches the item and its ancestor chain before applying a metadata-only
+`files.update`. A changed name, kind, Trash state, lost `capabilities.canRename` permission, or an
+item moved outside the Vault stops the operation. The returned item and live ancestry are verified
+again after the write. An uncertain response or post-write verification failure is reported as an
+unknown write status and is not retried automatically. For an open note, the editor records the
+revision returned by the rename without replacing its text or saved-text baseline, so unsaved edits
+remain dirty and a later save does not mistake the app's own rename for an external conflict.
+
 An OAuth token permits broader Drive access than the Vault. Possession of that token or an arbitrary
 file ID is never treated as proof of Vault membership.
 
@@ -124,6 +132,7 @@ Primary Drive references:
 
 - [Files: create](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/create)
 - [Files: update](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/update)
+- [File capabilities](https://developers.google.com/workspace/drive/api/guides/manage-sharing#capabilities)
 - [Trash or delete files and folders](https://developers.google.com/workspace/drive/api/guides/delete)
 - [File resource (`version`)](https://developers.google.com/workspace/drive/api/reference/rest/v3/files)
 - [Manage file revisions](https://developers.google.com/workspace/drive/api/guides/manage-revisions)

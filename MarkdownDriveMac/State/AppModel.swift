@@ -40,6 +40,13 @@ enum VaultItemCreationState: Equatable {
     case statusUnknown(String)
 }
 
+enum VaultItemRenameState: Equatable {
+    case idle
+    case renaming
+    case failed(String)
+    case statusUnknown(String)
+}
+
 struct VaultFolderDestination: Equatable, Identifiable {
     let id: String
     let displayPath: String
@@ -64,6 +71,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var isNewNotePresented = false
     @Published private(set) var isNewFolderPresented = false
     @Published private(set) var vaultItemCreationState: VaultItemCreationState = .idle
+    @Published private(set) var isRenamePresented = false
+    @Published private(set) var vaultItemRenameState: VaultItemRenameState = .idle
 
     private let authenticationController: AuthenticationController
     private let driveFolderBrowser: DriveFolderBrowser
@@ -71,6 +80,7 @@ final class AppModel: ObservableObject {
     private let vaultDocumentLoader: VaultDocumentLoader
     private let vaultDocumentSaver: VaultDocumentSaver
     private let vaultItemCreator: VaultItemCreator
+    private let vaultItemRenamer: VaultItemRenamer
     private let vaultStore: any VaultStore
     private var didAttemptRestore = false
     private var authenticationGeneration: UInt64 = 0
@@ -79,6 +89,8 @@ final class AppModel: ObservableObject {
     private var vaultTreeLoadID: UUID?
     private var documentLoadID: UUID?
     private var vaultItemCreationID: UUID?
+    private var vaultItemRenameID: UUID?
+    private var renameTargetItemID: String?
 
     init(
         authenticationController: AuthenticationController,
@@ -87,6 +99,7 @@ final class AppModel: ObservableObject {
         vaultDocumentLoader: VaultDocumentLoader,
         vaultDocumentSaver: VaultDocumentSaver,
         vaultItemCreator: VaultItemCreator,
+        vaultItemRenamer: VaultItemRenamer,
         vaultStore: any VaultStore,
         initialAuthenticationState: AuthenticationState = .signedOut
     ) {
@@ -96,6 +109,7 @@ final class AppModel: ObservableObject {
         self.vaultDocumentLoader = vaultDocumentLoader
         self.vaultDocumentSaver = vaultDocumentSaver
         self.vaultItemCreator = vaultItemCreator
+        self.vaultItemRenamer = vaultItemRenamer
         self.vaultStore = vaultStore
         authenticationState = initialAuthenticationState
     }
@@ -342,11 +356,125 @@ final class AppModel: ObservableObject {
         return tree.root.item.id
     }
 
+    var renameTargetItem: DriveItem? {
+        guard case .loaded(let tree) = vaultTreeState,
+            let renameTargetItemID,
+            renameTargetItemID != tree.root.item.id
+        else {
+            return nil
+        }
+        return tree.item(id: renameTargetItemID)
+    }
+
+    var canRenameSelectedItem: Bool {
+        guard case .signedIn = authenticationState,
+            case .loaded(let tree) = vaultTreeState,
+            let selectedTreeItemID,
+            selectedTreeItemID != tree.root.item.id,
+            let item = tree.item(id: selectedTreeItemID),
+            item.capabilities?.canRename != false,
+            vaultItemRenameState != .renaming
+        else {
+            return false
+        }
+        return true
+    }
+
+    func presentRenameSelectedItem() {
+        guard let selectedTreeItemID else {
+            return
+        }
+        presentRename(itemID: selectedTreeItemID)
+    }
+
+    func presentRename(itemID: String) {
+        guard case .signedIn = authenticationState,
+            case .loaded(let tree) = vaultTreeState,
+            itemID != tree.root.item.id,
+            let item = tree.item(id: itemID),
+            item.capabilities?.canRename != false,
+            vaultItemRenameState != .renaming
+        else {
+            return
+        }
+        vaultItemCreationID = nil
+        isNewNotePresented = false
+        isNewFolderPresented = false
+        vaultItemCreationState = .idle
+        renameTargetItemID = itemID
+        vaultItemRenameState = .idle
+        isRenamePresented = true
+    }
+
+    func dismissRename() {
+        guard vaultItemRenameState != .renaming else {
+            return
+        }
+        vaultItemRenameID = nil
+        renameTargetItemID = nil
+        isRenamePresented = false
+        vaultItemRenameState = .idle
+    }
+
+    func renameTarget(to name: String) async {
+        guard case .loaded(let tree) = vaultTreeState,
+            let renameTargetItemID,
+            vaultItemRenameState != .renaming
+        else {
+            return
+        }
+        let renameID = UUID()
+        let generation = authenticationGeneration
+        vaultItemRenameID = renameID
+        vaultItemRenameState = .renaming
+
+        do {
+            let result = try await vaultItemRenamer.rename(
+                itemID: renameTargetItemID,
+                to: name,
+                in: tree
+            )
+            guard vaultItemRenameID == renameID,
+                authenticationGeneration == generation
+            else {
+                return
+            }
+            if case .loaded(var document) = documentState,
+                document.fileID == result.item.id,
+                let revision = result.revision
+            {
+                document.recordRename(name: result.item.name, revision: revision)
+                documentState = .loaded(document)
+            }
+            isRenamePresented = false
+            vaultItemRenameState = .idle
+            await loadVaultTree()
+        } catch {
+            guard vaultItemRenameID == renameID,
+                authenticationGeneration == generation
+            else {
+                return
+            }
+            if let driveError = error as? DriveError,
+                driveError == .writeStatusUnknown
+            {
+                vaultItemRenameState = .statusUnknown(driveError.localizedDescription)
+            } else {
+                vaultItemRenameState = .failed(error.localizedDescription)
+            }
+            transitionToReauthenticationIfNeeded(error)
+        }
+    }
+
     func presentNewNote() {
         guard canCreateVaultItems else {
             return
         }
         vaultItemCreationState = .idle
+        vaultItemRenameID = nil
+        renameTargetItemID = nil
+        isRenamePresented = false
+        vaultItemRenameState = .idle
         isNewNotePresented = true
     }
 
@@ -355,6 +483,10 @@ final class AppModel: ObservableObject {
             return
         }
         vaultItemCreationState = .idle
+        vaultItemRenameID = nil
+        renameTargetItemID = nil
+        isRenamePresented = false
+        vaultItemRenameState = .idle
         isNewFolderPresented = true
     }
 
@@ -919,6 +1051,10 @@ final class AppModel: ObservableObject {
         isNewNotePresented = false
         isNewFolderPresented = false
         vaultItemCreationState = .idle
+        vaultItemRenameID = nil
+        renameTargetItemID = nil
+        isRenamePresented = false
+        vaultItemRenameState = .idle
         if preserveDirtyDocument, documentSaveState == .saving {
             documentSaveState = .idle
         }

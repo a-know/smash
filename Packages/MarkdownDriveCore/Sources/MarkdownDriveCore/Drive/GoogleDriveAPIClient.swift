@@ -165,7 +165,7 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
         return item
     }
 
-    public func renameItem(id: String, name: String) async throws -> DriveItem {
+    public func renameItem(id: String, name: String) async throws -> DriveItemRenameResult {
         let url = baseURL.appendingPathComponent("files").appendingPathComponent(id)
         var request = try await authorizedRequest(
             url: url,
@@ -182,11 +182,11 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
         }
         request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
 
-        let item = try await performItemWrite(request)
-        guard item.id == id, item.name == name, !item.isTrashed else {
+        let result = try await performRenameWrite(request)
+        guard result.item.id == id, result.item.name == name, !result.item.isTrashed else {
             throw DriveError.writeStatusUnknown
         }
-        return item
+        return result
     }
 
     public func listChildren(of folderID: String) async throws -> [DriveItem] {
@@ -424,6 +424,28 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
             return try decodeFile(from: data).driveItem
         } catch {
             // A successful HTTP response means Drive may already have committed the write.
+            throw DriveError.writeStatusUnknown
+        }
+    }
+
+    private func performRenameWrite(_ request: URLRequest) async throws -> DriveItemRenameResult {
+        let data: Data
+        do {
+            data = try await perform(
+                request,
+                retryAfterAuthenticationFailure: false
+            )
+        } catch DriveError.networkFailure,
+            DriveError.serverUnavailable,
+            DriveError.invalidResponse
+        {
+            throw DriveError.writeStatusUnknown
+        }
+
+        do {
+            let file = try decodeFile(from: data)
+            return DriveItemRenameResult(item: file.driveItem, revision: file.revision)
+        } catch {
             throw DriveError.writeStatusUnknown
         }
     }

@@ -16,6 +16,7 @@ enum AppDependencies {
             vaultDocumentLoader: VaultDocumentLoader(driveContentClient: driveClient),
             vaultDocumentSaver: VaultDocumentSaver(driveWriteClient: driveClient),
             vaultItemCreator: VaultItemCreator(driveClient: driveClient),
+            vaultItemRenamer: VaultItemRenamer(driveClient: driveClient),
             vaultStore: UserDefaultsVaultStore()
         )
     }

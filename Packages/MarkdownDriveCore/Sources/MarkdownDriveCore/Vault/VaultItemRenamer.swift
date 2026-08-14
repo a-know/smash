@@ -9,7 +9,7 @@ public actor VaultItemRenamer {
         itemID: String,
         to proposedName: String,
         in tree: VaultTree
-    ) async throws -> DriveItem {
+    ) async throws -> DriveItemRenameResult {
         guard itemID != tree.root.item.id else {
             throw DriveError.vaultRootModificationNotAllowed
         }
@@ -38,13 +38,14 @@ public actor VaultItemRenamer {
             name = try VaultItemNameRules.folderName(from: proposedName)
         }
         if name == currentItem.name {
-            return currentItem
+            return DriveItemRenameResult(item: currentItem, revision: nil)
         }
 
-        let renamedItem = try await driveClient.renameItem(id: itemID, name: name)
-        guard renamedItem.kind == currentItem.kind,
-            renamedItem.name == name,
-            !renamedItem.isTrashed
+        let renameResult = try await driveClient.renameItem(id: itemID, name: name)
+        guard renameResult.item.kind == currentItem.kind,
+            renameResult.item.name == name,
+            !renameResult.item.isTrashed,
+            currentItem.kind != .file || renameResult.revision != nil
         else {
             throw DriveError.writeStatusUnknown
         }
@@ -63,6 +64,9 @@ public actor VaultItemRenamer {
         } catch {
             throw DriveError.writeStatusUnknown
         }
-        return verifiedItem
+        return DriveItemRenameResult(
+            item: verifiedItem,
+            revision: renameResult.revision
+        )
     }
 }

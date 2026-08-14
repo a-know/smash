@@ -27,5 +27,12 @@ struct MarkdownDocumentCommands: Commands {
             .keyboardShortcut("s", modifiers: .command)
             .disabled(!appModel.canSaveDocument)
         }
+
+        CommandMenu("Item") {
+            Button("Rename…") {
+                appModel.presentRenameSelectedItem()
+            }
+            .disabled(!appModel.canRenameSelectedItem)
+        }
     }
 }
