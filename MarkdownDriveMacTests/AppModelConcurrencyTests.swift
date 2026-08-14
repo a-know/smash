@@ -244,6 +244,28 @@ final class AppModelConcurrencyTests: XCTestCase {
         XCTAssertTrue(tree.containsFolder(id: "created-folder"))
     }
 
+    func testDuplicateFolderPathsAreDisambiguatedWithDriveIDs() async {
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [
+                TreeResponse(items: [
+                    folder(id: "folder-one", name: "Notes"),
+                    folder(id: "folder-two", name: "Notes"),
+                ])
+            ]
+        )
+        let appModel = makeAppModel(driveClient: driveClient)
+        await appModel.restoreSession()
+
+        XCTAssertEqual(
+            appModel.availableVaultFolders.map(\.displayPath),
+            [
+                "Vault",
+                "Vault / Notes (folder-one)",
+                "Vault / Notes (folder-two)",
+            ]
+        )
+    }
+
     private func makeAppModel(
         driveClient: ControlledAppDriveClient,
         vaultStore: any VaultStore = FakeAppVaultStore()
@@ -351,6 +373,10 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
 
     func createFolder(name: String, parentID: String) async throws -> DriveItem {
         try folderCreationResult.get()
+    }
+
+    func trashItem(id: String) async throws -> DriveItem {
+        throw DriveError.itemNotFound
     }
 
     func waitUntilDownloadStarts() async {

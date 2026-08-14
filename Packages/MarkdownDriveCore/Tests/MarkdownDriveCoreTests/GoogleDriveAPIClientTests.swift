@@ -473,6 +473,41 @@ final class GoogleDriveAPIClientTests: XCTestCase {
         }
     }
 
+    func testTrashesItemWithMetadataPatchAndSharedDriveSupport() async throws {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(
+                statusCode: 200,
+                body: """
+                    {
+                      "id": "created-file",
+                      "name": "Idea.md",
+                      "mimeType": "text/markdown",
+                      "parents": ["outside"],
+                      "trashed": true
+                    }
+                    """
+            )
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        let item = try await client.trashItem(id: "created-file")
+
+        XCTAssertTrue(item.isTrashed)
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests[0].httpMethod, "PATCH")
+        XCTAssertEqual(requests[0].url?.path, "/drive/v3/files/created-file")
+        XCTAssertEqual(queryValue(named: "supportsAllDrives", in: requests[0]), "true")
+        let body = try XCTUnwrap(requests[0].httpBody)
+        let metadata = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: body) as? [String: Bool]
+        )
+        XCTAssertEqual(metadata, ["trashed": true])
+    }
+
     func testListChildrenClassifies403RateLimitReason() async {
         let transport = FakeDriveHTTPTransport(responses: [
             .success(

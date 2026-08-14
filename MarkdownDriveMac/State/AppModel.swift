@@ -310,7 +310,18 @@ final class AppModel: ObservableObject {
         guard case .loaded(let tree) = vaultTreeState else {
             return []
         }
-        return Self.folderDestinations(in: tree.root, parentPath: nil)
+        let destinations = Self.folderDestinations(in: tree.root, parentPath: nil)
+        let pathCounts = Dictionary(grouping: destinations, by: \.displayPath)
+            .mapValues(\.count)
+        return destinations.map { destination in
+            guard pathCounts[destination.displayPath, default: 0] > 1 else {
+                return destination
+            }
+            return VaultFolderDestination(
+                id: destination.id,
+                displayPath: "\(destination.displayPath) (\(destination.id))"
+            )
+        }
     }
 
     var defaultCreationFolderID: String? {

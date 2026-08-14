@@ -119,6 +119,73 @@ final class VaultItemCreatorTests: XCTestCase {
         }
     }
 
+    func testTrashesCreatedItemWhenDestinationMovesOutsideDuringCreation() async {
+        let insideFolder = DriveItem(
+            id: "nested",
+            name: "Nested",
+            kind: .folder,
+            parentIDs: ["vault"]
+        )
+        let outsideFolder = DriveItem(
+            id: "nested",
+            name: "Nested",
+            kind: .folder,
+            parentIDs: ["outside"]
+        )
+        let client = FakeItemCreationClient(
+            itemSequences: ["nested": [insideFolder, outsideFolder]]
+        )
+        let creator = VaultItemCreator(driveClient: client)
+
+        do {
+            _ = try await creator.createMarkdownFile(
+                name: "note",
+                parentFolderID: "nested",
+                in: makeTree()
+            )
+            XCTFail("Expected post-create boundary violation")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .vaultBoundaryViolation)
+        }
+
+        let trashedItemIDs = await client.trashedItemIDs
+        XCTAssertEqual(trashedItemIDs, ["created-file"])
+    }
+
+    func testCleanupFailureAfterBoundaryRaceHasUnknownWriteStatus() async {
+        let insideFolder = DriveItem(
+            id: "nested",
+            name: "Nested",
+            kind: .folder,
+            parentIDs: ["vault"]
+        )
+        let outsideFolder = DriveItem(
+            id: "nested",
+            name: "Nested",
+            kind: .folder,
+            parentIDs: ["outside"]
+        )
+        let client = FakeItemCreationClient(
+            itemSequences: ["nested": [insideFolder, outsideFolder]],
+            trashResult: .failure(.permissionDenied)
+        )
+        let creator = VaultItemCreator(driveClient: client)
+
+        do {
+            _ = try await creator.createMarkdownFile(
+                name: "note",
+                parentFolderID: "nested",
+                in: makeTree()
+            )
+            XCTFail("Expected ambiguous cleanup result")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .writeStatusUnknown)
+        }
+
+        let trashedItemIDs = await client.trashedItemIDs
+        XCTAssertEqual(trashedItemIDs, ["created-file"])
+    }
+
     private func makeTree() -> VaultTree {
         VaultTree(
             root: DriveTreeNode(
@@ -151,20 +218,38 @@ private actor FakeItemCreationClient: DriveItemCreationClient {
         let parentID: String
     }
 
-    private let items: [String: DriveItem]
+    private var itemSequences: [String: [DriveItem]]
+    private var createdItems: [String: DriveItem] = [:]
+    private let trashResult: Result<Void, DriveError>
     private(set) var fileCreations: [FileCreation] = []
     private(set) var folderCreations: [FolderCreation] = []
+    private(set) var trashedItemIDs: [String] = []
 
-    init(items: [String: DriveItem] = [:]) {
-        self.items = items
+    init(
+        items: [String: DriveItem] = [:],
+        itemSequences: [String: [DriveItem]] = [:],
+        trashResult: Result<Void, DriveError> = .success(())
+    ) {
+        self.itemSequences = items.mapValues { [$0] }
+        self.trashResult = trashResult
+        for (id, sequence) in itemSequences {
+            self.itemSequences[id] = sequence
+        }
     }
 
     func getItem(id: String) async throws -> DriveItem {
         if id == "vault" {
             return DriveItem(id: "vault", name: "Vault", kind: .folder)
         }
-        guard let item = items[id] else {
+        if let createdItem = createdItems[id] {
+            return createdItem
+        }
+        guard var sequence = itemSequences[id], let item = sequence.first else {
             throw DriveError.itemNotFound
+        }
+        if sequence.count > 1 {
+            sequence.removeFirst()
+            itemSequences[id] = sequence
         }
         return item
     }
@@ -178,26 +263,41 @@ private actor FakeItemCreationClient: DriveItemCreationClient {
         fileCreations.append(
             FileCreation(name: name, parentID: parentID, data: data, mimeType: mimeType)
         )
+        let item = DriveItem(
+            id: "created-file",
+            name: name,
+            kind: .file,
+            mimeType: mimeType,
+            parentIDs: [parentID]
+        )
+        createdItems[item.id] = item
         return DriveFileMetadata(
-            item: DriveItem(
-                id: "created-file",
-                name: name,
-                kind: .file,
-                mimeType: mimeType,
-                parentIDs: [parentID]
-            ),
+            item: item,
             revision: DriveFileRevision(version: "1", modifiedTime: .distantPast)
         )
     }
 
     func createFolder(name: String, parentID: String) async throws -> DriveItem {
         folderCreations.append(FolderCreation(name: name, parentID: parentID))
-        return DriveItem(
+        let item = DriveItem(
             id: "created-folder",
             name: name,
             kind: .folder,
             mimeType: GoogleDriveAPIClient.folderMimeType,
             parentIDs: [parentID]
+        )
+        createdItems[item.id] = item
+        return item
+    }
+
+    func trashItem(id: String) async throws -> DriveItem {
+        trashedItemIDs.append(id)
+        try trashResult.get()
+        return DriveItem(
+            id: id,
+            name: "Recovered item",
+            kind: .file,
+            isTrashed: true
         )
     }
 }

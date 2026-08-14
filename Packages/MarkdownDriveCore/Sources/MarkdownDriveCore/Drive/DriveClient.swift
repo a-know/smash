@@ -28,6 +28,7 @@ public protocol DriveWriteClient: DriveFileCreationClient {
 
 public protocol DriveItemCreationClient: DriveFileCreationClient {
     func createFolder(name: String, parentID: String) async throws -> DriveItem
+    func trashItem(id: String) async throws -> DriveItem
 }
 
 public struct DriveFileRevision: Equatable, Sendable {

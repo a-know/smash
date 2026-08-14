@@ -28,6 +28,7 @@ public actor VaultItemCreator {
         else {
             throw DriveError.writeStatusUnknown
         }
+        try await verifyCreatedItem(metadata.item, remainsIn: tree)
         return metadata
     }
 
@@ -50,6 +51,7 @@ public actor VaultItemCreator {
         else {
             throw DriveError.writeStatusUnknown
         }
+        try await verifyCreatedItem(item, remainsIn: tree)
         return item
     }
 
@@ -74,6 +76,33 @@ public actor VaultItemCreator {
         }
         _ = try await VaultBoundaryValidator(driveItemClient: driveClient)
             .currentParentID(of: currentFolder, in: tree)
+    }
+
+    private func verifyCreatedItem(
+        _ item: DriveItem,
+        remainsIn tree: VaultTree
+    ) async throws {
+        let currentItem: DriveItem
+        do {
+            currentItem = try await driveClient.getItem(id: item.id)
+        } catch {
+            throw DriveError.writeStatusUnknown
+        }
+        do {
+            _ = try await VaultBoundaryValidator(driveItemClient: driveClient)
+                .currentParentID(of: currentItem, in: tree)
+        } catch DriveError.vaultBoundaryViolation {
+            do {
+                _ = try await driveClient.trashItem(id: item.id)
+            } catch {
+                throw DriveError.writeStatusUnknown
+            }
+            throw DriveError.vaultBoundaryViolation
+        } catch {
+            // Creation succeeded, but its final location could not be confirmed. A retry could
+            // create a duplicate, so surface an ambiguous result instead of retrying blindly.
+            throw DriveError.writeStatusUnknown
+        }
     }
 }
 

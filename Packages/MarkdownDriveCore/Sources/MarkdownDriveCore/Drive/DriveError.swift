@@ -39,7 +39,7 @@ extension DriveError: LocalizedError {
         case .invalidHierarchy:
             "The Vault contains an invalid folder hierarchy."
         case .invalidName:
-            "Enter a non-empty name without slashes or control characters."
+            "Enter a non-empty name other than '.' or '..', without slashes or control characters."
         case .invalidResponse:
             "Google Drive returned an invalid response."
         case .invalidUTF8:

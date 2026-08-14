@@ -141,6 +141,30 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
         return item
     }
 
+    public func trashItem(id: String) async throws -> DriveItem {
+        let url = baseURL.appendingPathComponent("files").appendingPathComponent(id)
+        var request = try await authorizedRequest(
+            url: url,
+            queryItems: [
+                URLQueryItem(name: "supportsAllDrives", value: "true"),
+                URLQueryItem(name: "fields", value: Self.fileFields),
+            ]
+        )
+        request.httpMethod = "PATCH"
+        do {
+            request.httpBody = try JSONEncoder().encode(GoogleDriveTrashMetadata(trashed: true))
+        } catch {
+            throw DriveError.invalidResponse
+        }
+        request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+
+        let item = try await performItemWrite(request)
+        guard item.id == id, item.isTrashed else {
+            throw DriveError.writeStatusUnknown
+        }
+        return item
+    }
+
     public func listChildren(of folderID: String) async throws -> [DriveItem] {
         var items: [DriveItem] = []
         var pageToken: String?
@@ -455,6 +479,10 @@ private struct GoogleDriveCreateFileMetadata: Encodable {
         self.parents = parents
         self.mimeType = mimeType
     }
+}
+
+private struct GoogleDriveTrashMetadata: Encodable {
+    let trashed: Bool
 }
 
 private struct GoogleDriveErrorDetails: Decodable {
