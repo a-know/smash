@@ -65,6 +65,7 @@ actor GoogleAuthenticationService: AuthenticationService {
             throw AuthenticationError.oauthServerRejected(code: "missing_refresh_token")
         }
 
+        invalidateCurrentSession()
         do {
             try refreshTokenStore.save(refreshToken)
             currentRefreshToken = refreshToken

@@ -56,6 +56,7 @@ final class AppModel: ObservableObject {
     private let vaultDocumentSaver: VaultDocumentSaver
     private let vaultStore: any VaultStore
     private var didAttemptRestore = false
+    private var authenticationGeneration: UInt64 = 0
     private var vaultRestoreID: UUID?
     private var vaultBrowserLoadID: UUID?
     private var vaultTreeLoadID: UUID?
@@ -84,14 +85,24 @@ final class AppModel: ObservableObject {
             return
         }
         didAttemptRestore = true
+        let generation = beginAuthenticationTransition()
         authenticationState = .restoring
-        authenticationState = await authenticationController.restoreSession()
+        let restoredState = await authenticationController.restoreSession()
+        guard authenticationGeneration == generation else {
+            return
+        }
+        authenticationState = restoredState
         await restoreVaultIfAuthenticated()
     }
 
     func signIn() async {
+        let generation = beginAuthenticationTransition()
         authenticationState = .signingIn
-        authenticationState = await authenticationController.signIn()
+        let signedInState = await authenticationController.signIn()
+        guard authenticationGeneration == generation else {
+            return
+        }
+        authenticationState = signedInState
         await restoreVaultIfAuthenticated()
     }
 
@@ -99,8 +110,12 @@ final class AppModel: ObservableObject {
         guard !hasDirtyDocument else {
             return
         }
-        invalidateVaultLoads()
-        authenticationState = await authenticationController.signOut()
+        let generation = beginAuthenticationTransition()
+        let signedOutState = await authenticationController.signOut()
+        guard authenticationGeneration == generation else {
+            return
+        }
+        authenticationState = signedOutState
         if authenticationState == .signedOut {
             selectedVault = nil
             vaultTreeState = .idle
@@ -145,17 +160,28 @@ final class AppModel: ObservableObject {
         guard !hasDirtyDocument else {
             return
         }
+        let generation = authenticationGeneration
         vaultRestoreID = nil
         do {
             let vault = try await driveFolderBrowser.makeVault()
+            guard authenticationGeneration == generation else {
+                return
+            }
             try await vaultStore.saveVault(vault)
+            guard authenticationGeneration == generation else {
+                return
+            }
             selectedVault = vault
             clearDocument()
             vaultPersistenceError = nil
             dismissVaultBrowser()
             await loadVaultTree()
         } catch {
+            guard authenticationGeneration == generation else {
+                return
+            }
             vaultBrowserState = .failed(error.localizedDescription)
+            transitionToReauthenticationIfNeeded(error)
         }
     }
 
@@ -163,11 +189,13 @@ final class AppModel: ObservableObject {
         operation: () async throws -> DriveFolderBrowserSnapshot
     ) async {
         let loadID = UUID()
+        let generation = authenticationGeneration
         vaultBrowserLoadID = loadID
         vaultBrowserState = .loading
         do {
             let snapshot = try await operation()
             guard vaultBrowserLoadID == loadID,
+                authenticationGeneration == generation,
                 isVaultBrowserPresented
             else {
                 return
@@ -175,6 +203,7 @@ final class AppModel: ObservableObject {
             vaultBrowserState = .loaded(snapshot)
         } catch {
             guard vaultBrowserLoadID == loadID,
+                authenticationGeneration == generation,
                 isVaultBrowserPresented
             else {
                 return
@@ -189,10 +218,12 @@ final class AppModel: ObservableObject {
             return
         }
         let restoreID = UUID()
+        let generation = authenticationGeneration
         vaultRestoreID = restoreID
         do {
             let restoredVault = try await vaultStore.loadVault()
             guard vaultRestoreID == restoreID,
+                authenticationGeneration == generation,
                 case .signedIn = authenticationState
             else {
                 return
@@ -203,6 +234,7 @@ final class AppModel: ObservableObject {
             await loadVaultTree()
         } catch {
             guard vaultRestoreID == restoreID,
+                authenticationGeneration == generation,
                 case .signedIn = authenticationState
             else {
                 return
@@ -219,12 +251,14 @@ final class AppModel: ObservableObject {
             return
         }
         let loadID = UUID()
+        let generation = authenticationGeneration
         let vaultRootFolderID = selectedVault.rootFolderID
         vaultTreeLoadID = loadID
         vaultTreeState = .loading
         do {
             let tree = try await vaultTreeLoader.load(vault: selectedVault)
             guard vaultTreeLoadID == loadID,
+                authenticationGeneration == generation,
                 self.selectedVault?.rootFolderID == vaultRootFolderID
             else {
                 return
@@ -232,6 +266,7 @@ final class AppModel: ObservableObject {
             vaultTreeState = .loaded(tree)
         } catch {
             guard vaultTreeLoadID == loadID,
+                authenticationGeneration == generation,
                 self.selectedVault?.rootFolderID == vaultRootFolderID
             else {
                 return
@@ -333,13 +368,15 @@ final class AppModel: ObservableObject {
         }
 
         let documentBeingSaved = document
+        let generation = authenticationGeneration
         documentSaveState = .saving
         do {
             let savedDocument = try await vaultDocumentSaver.save(
                 document: documentBeingSaved,
                 in: tree
             )
-            guard case .loaded(var currentDocument) = documentState,
+            guard authenticationGeneration == generation,
+                case .loaded(var currentDocument) = documentState,
                 currentDocument.fileID == documentBeingSaved.fileID
             else {
                 return
@@ -355,8 +392,14 @@ final class AppModel: ObservableObject {
             documentState = .loaded(currentDocument)
             documentSaveState = currentDocument.isDirty ? .idle : .saved
         } catch let error as DocumentSaveError {
+            guard authenticationGeneration == generation else {
+                return
+            }
             handleSaveError(error, fileID: documentBeingSaved.fileID)
         } catch {
+            guard authenticationGeneration == generation else {
+                return
+            }
             handleSaveError(.unexpected, fileID: documentBeingSaved.fileID)
         }
     }
@@ -373,6 +416,7 @@ final class AppModel: ObservableObject {
             return
         }
         let documentBeingReloaded = document
+        let generation = authenticationGeneration
         isConflictAlertPresented = false
         documentSaveState = .conflict
 
@@ -381,7 +425,8 @@ final class AppModel: ObservableObject {
                 fileID: documentBeingReloaded.fileID,
                 from: tree
             )
-            guard case .loaded(let currentDocument) = documentState,
+            guard authenticationGeneration == generation,
+                case .loaded(let currentDocument) = documentState,
                 currentDocument.fileID == documentBeingReloaded.fileID
             else {
                 return
@@ -399,6 +444,9 @@ final class AppModel: ObservableObject {
             selectedTreeItemID = remoteDocument.fileID
             documentSaveState = .idle
         } catch let error as AuthenticationError {
+            guard authenticationGeneration == generation else {
+                return
+            }
             handleReloadError(
                 message:
                     "The remote version could not be loaded. \(error.localizedDescription) Your local edits are still available.",
@@ -406,6 +454,9 @@ final class AppModel: ObservableObject {
                 authenticationError: error
             )
         } catch let error as DriveError {
+            guard authenticationGeneration == generation else {
+                return
+            }
             let authenticationError: AuthenticationError? =
                 error == .authenticationRequired ? .reauthenticationRequired : nil
             handleReloadError(
@@ -415,6 +466,9 @@ final class AppModel: ObservableObject {
                 authenticationError: authenticationError
             )
         } catch {
+            guard authenticationGeneration == generation else {
+                return
+            }
             handleReloadError(
                 message:
                     "The remote version could not be loaded. Your local edits are still available.",
@@ -432,6 +486,7 @@ final class AppModel: ObservableObject {
         }
 
         let documentBeingCopied = document
+        let generation = authenticationGeneration
         isConflictAlertPresented = false
         documentSaveState = .saving
         do {
@@ -440,7 +495,8 @@ final class AppModel: ObservableObject {
                 name: Self.conflictCopyName(for: documentBeingCopied.name),
                 in: tree
             )
-            guard case .loaded(let currentDocument) = documentState,
+            guard authenticationGeneration == generation,
+                case .loaded(let currentDocument) = documentState,
                 currentDocument.fileID == documentBeingCopied.fileID
             else {
                 return
@@ -455,8 +511,14 @@ final class AppModel: ObservableObject {
             }
             await loadVaultTree()
         } catch let error as DocumentSaveError {
+            guard authenticationGeneration == generation else {
+                return
+            }
             handleSaveError(error, fileID: documentBeingCopied.fileID)
         } catch {
+            guard authenticationGeneration == generation else {
+                return
+            }
             handleSaveError(.unexpected, fileID: documentBeingCopied.fileID)
         }
     }
@@ -470,6 +532,7 @@ final class AppModel: ObservableObject {
         }
 
         let documentBeingSaved = document
+        let generation = authenticationGeneration
         isConflictAlertPresented = false
         documentSaveState = .saving
         do {
@@ -477,7 +540,8 @@ final class AppModel: ObservableObject {
                 document: documentBeingSaved,
                 in: tree
             )
-            guard case .loaded(var currentDocument) = documentState,
+            guard authenticationGeneration == generation,
+                case .loaded(var currentDocument) = documentState,
                 currentDocument.fileID == documentBeingSaved.fileID
             else {
                 return
@@ -493,8 +557,14 @@ final class AppModel: ObservableObject {
             documentState = .loaded(currentDocument)
             documentSaveState = currentDocument.isDirty ? .idle : .saved
         } catch let error as DocumentSaveError {
+            guard authenticationGeneration == generation else {
+                return
+            }
             handleSaveError(error, fileID: documentBeingSaved.fileID)
         } catch {
+            guard authenticationGeneration == generation else {
+                return
+            }
             handleSaveError(.unexpected, fileID: documentBeingSaved.fileID)
         }
     }
@@ -513,7 +583,7 @@ final class AppModel: ObservableObject {
         switch error {
         case .authentication(let authenticationError):
             documentSaveState = .failed(error.localizedDescription)
-            authenticationState = .failed(authenticationError)
+            transitionToReauthentication(authenticationError)
         case .conflict:
             documentSaveState = .conflict
             isConflictAlertPresented = true
@@ -540,7 +610,7 @@ final class AppModel: ObservableObject {
         documentSaveState = .reloadFailed(message)
         isSaveErrorAlertPresented = true
         if let authenticationError {
-            authenticationState = .failed(authenticationError)
+            transitionToReauthentication(authenticationError)
         }
     }
 
@@ -552,18 +622,23 @@ final class AppModel: ObservableObject {
 
     private func loadDocument(fileID: String, from tree: VaultTree) async {
         let loadID = UUID()
+        let generation = authenticationGeneration
         documentLoadID = loadID
         selectedTreeItemID = fileID
         documentState = .loading(fileID: fileID)
         documentSaveState = .idle
         do {
             let document = try await vaultDocumentLoader.load(fileID: fileID, from: tree)
-            guard documentLoadID == loadID else {
+            guard documentLoadID == loadID,
+                authenticationGeneration == generation
+            else {
                 return
             }
             documentState = .loaded(document)
         } catch {
-            guard documentLoadID == loadID else {
+            guard documentLoadID == loadID,
+                authenticationGeneration == generation
+            else {
                 return
             }
             documentState = .failed(fileID: fileID, message: error.localizedDescription)
@@ -587,6 +662,7 @@ final class AppModel: ObservableObject {
         if case .loading = documentState {
             documentState = .idle
             documentSaveState = .idle
+            selectedTreeItemID = nil
         }
     }
 
@@ -600,11 +676,43 @@ final class AppModel: ObservableObject {
         if let authenticationError = error as? AuthenticationError,
             authenticationError == .reauthenticationRequired
         {
-            authenticationState = .failed(authenticationError)
+            transitionToReauthentication(authenticationError)
         } else if let driveError = error as? DriveError,
             driveError == .authenticationRequired
         {
-            authenticationState = .failed(.reauthenticationRequired)
+            transitionToReauthentication(.reauthenticationRequired)
+        }
+    }
+
+    @discardableResult
+    private func beginAuthenticationTransition() -> UInt64 {
+        authenticationGeneration &+= 1
+        invalidateOutstandingOperationsForAuthenticationChange()
+        return authenticationGeneration
+    }
+
+    private func transitionToReauthentication(_ error: AuthenticationError) {
+        _ = beginAuthenticationTransition()
+        authenticationState = .failed(error)
+    }
+
+    private func invalidateOutstandingOperationsForAuthenticationChange() {
+        let preserveDirtyDocument = hasDirtyDocument
+        invalidateVaultLoads()
+        cancelActiveDocumentLoad()
+        if !preserveDirtyDocument {
+            documentState = .idle
+            documentSaveState = .idle
+            selectedTreeItemID = nil
+            isConflictAlertPresented = false
+            isSaveErrorAlertPresented = false
+        }
+        pendingDocumentFileID = nil
+        isDiscardConfirmationPresented = false
+        isVaultBrowserPresented = false
+        vaultBrowserState = .idle
+        if preserveDirtyDocument, documentSaveState == .saving {
+            documentSaveState = .idle
         }
     }
 }

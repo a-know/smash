@@ -105,12 +105,59 @@ final class GoogleAuthenticationServiceTests: XCTestCase {
         XCTAssertEqual(currentAccessToken, AccessToken(rawValue: "new-access"))
     }
 
+    func testRefreshStartedDuringInteractiveSignInCannotOverwriteNewSession() async throws {
+        let authorizationFlow = ControlledAuthorizationFlow()
+        let tokenClient = ControlledTokenClient(
+            exchangeResponse: tokenResponse(
+                accessToken: "new-access",
+                refreshToken: "new-refresh"
+            )
+        )
+        let tokenStore = FakeRefreshTokenStore(token: "old-refresh")
+        let service = makeService(
+            authorizationFlow: authorizationFlow,
+            tokenClient: tokenClient,
+            tokenStore: tokenStore
+        )
+
+        let signInRequest = Task {
+            try await service.signIn()
+        }
+        await authorizationFlow.waitUntilAuthorizationStarts()
+        let staleAccessTokenRequest = Task {
+            try await service.validAccessToken()
+        }
+        await tokenClient.waitForRefreshCount(1)
+
+        await authorizationFlow.completeAuthorization()
+        _ = try await signInRequest.value
+        await tokenClient.completeNextRefresh(
+            with: .success(
+                tokenResponse(
+                    accessToken: "stale-access",
+                    refreshToken: "stale-refresh"
+                )
+            )
+        )
+
+        do {
+            _ = try await staleAccessTokenRequest.value
+            XCTFail("Expected the refresh from the replaced session to fail")
+        } catch {
+            XCTAssertEqual(error as? AuthenticationError, .reauthenticationRequired)
+        }
+        XCTAssertEqual(tokenStore.storedToken, "new-refresh")
+        let currentAccessToken = try await service.validAccessToken()
+        XCTAssertEqual(currentAccessToken, AccessToken(rawValue: "new-access"))
+    }
+
     private func makeService(
+        authorizationFlow: any GoogleOAuthAuthorizationFlowProtocol = FakeAuthorizationFlow(),
         tokenClient: ControlledTokenClient,
         tokenStore: FakeRefreshTokenStore
     ) -> GoogleAuthenticationService {
         GoogleAuthenticationService(
-            authorizationFlow: FakeAuthorizationFlow(),
+            authorizationFlow: authorizationFlow,
             tokenClient: tokenClient,
             refreshTokenStore: tokenStore,
             configurationProvider: {
@@ -134,6 +181,35 @@ final class GoogleAuthenticationServiceTests: XCTestCase {
             scope: GoogleOAuthConfiguration.driveScope,
             tokenType: "Bearer"
         )
+    }
+}
+
+private actor ControlledAuthorizationFlow: GoogleOAuthAuthorizationFlowProtocol {
+    private var continuation: CheckedContinuation<GoogleAuthorizationGrant, Never>?
+    private var didStartAuthorization = false
+
+    func authorize(configuration: GoogleOAuthConfiguration) async throws -> GoogleAuthorizationGrant {
+        didStartAuthorization = true
+        return await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func waitUntilAuthorizationStarts() async {
+        while !didStartAuthorization {
+            await Task.yield()
+        }
+    }
+
+    func completeAuthorization() {
+        continuation?.resume(
+            returning: GoogleAuthorizationGrant(
+                code: "authorization-code",
+                codeVerifier: "code-verifier",
+                redirectURI: URL(string: "http://127.0.0.1/oauth2callback")!
+            )
+        )
+        continuation = nil
     }
 }
 

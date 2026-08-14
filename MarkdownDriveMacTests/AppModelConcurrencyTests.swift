@@ -83,6 +83,79 @@ final class AppModelConcurrencyTests: XCTestCase {
         XCTAssertEqual(appModel.vaultTreeState, .idle)
     }
 
+    func testReauthenticationInvalidatesDocumentLoadFromPreviousSession() async throws {
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [
+                TreeResponse(items: [file(id: "note", name: "note.md")]),
+                TreeResponse(error: .authenticationRequired),
+                TreeResponse(items: [file(id: "note", name: "note.md")]),
+            ],
+            controlledDownload: DriveFileDownload(
+                item: file(id: "note", name: "note.md"),
+                data: Data("old session content".utf8),
+                revision: revision()
+            )
+        )
+        let appModel = makeAppModel(driveClient: driveClient)
+        await appModel.restoreSession()
+
+        let oldSessionDocumentLoad = Task { @MainActor in
+            await appModel.selectTreeItem(id: "note")
+        }
+        await driveClient.waitUntilDownloadStarts()
+        await appModel.loadVaultTree()
+        XCTAssertEqual(
+            appModel.authenticationState,
+            .failed(.reauthenticationRequired)
+        )
+
+        await appModel.signIn()
+        await driveClient.completeDownload()
+        await oldSessionDocumentLoad.value
+
+        guard case .signedIn = appModel.authenticationState else {
+            return XCTFail("Expected reauthentication to succeed")
+        }
+        XCTAssertEqual(appModel.documentState, .idle)
+        XCTAssertNil(appModel.selectedTreeItemID)
+    }
+
+    func testReauthenticationPreservesLoadedDirtyDocument() async throws {
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [
+                TreeResponse(items: [file(id: "note", name: "note.md")]),
+                TreeResponse(error: .authenticationRequired),
+            ],
+            controlledDownload: DriveFileDownload(
+                item: file(id: "note", name: "note.md"),
+                data: Data("saved text".utf8),
+                revision: revision()
+            )
+        )
+        let appModel = makeAppModel(driveClient: driveClient)
+        await appModel.restoreSession()
+
+        let documentLoad = Task { @MainActor in
+            await appModel.selectTreeItem(id: "note")
+        }
+        await driveClient.waitUntilDownloadStarts()
+        await driveClient.completeDownload()
+        await documentLoad.value
+        appModel.updateDocumentText("unsaved local text")
+
+        await appModel.loadVaultTree()
+
+        XCTAssertEqual(
+            appModel.authenticationState,
+            .failed(.reauthenticationRequired)
+        )
+        guard case .loaded(let document) = appModel.documentState else {
+            return XCTFail("Expected the dirty document to be retained")
+        }
+        XCTAssertEqual(document.text, "unsaved local text")
+        XCTAssertTrue(document.isDirty)
+    }
+
     private func makeAppModel(
         driveClient: ControlledAppDriveClient,
         vaultStore: any VaultStore = FakeAppVaultStore()
@@ -102,11 +175,16 @@ final class AppModelConcurrencyTests: XCTestCase {
 }
 
 private struct TreeResponse: Sendable {
-    let items: [DriveItem]
+    let result: Result<[DriveItem], DriveError>
     let delayNanoseconds: UInt64
 
     init(items: [DriveItem], delayNanoseconds: UInt64 = 0) {
-        self.items = items
+        result = .success(items)
+        self.delayNanoseconds = delayNanoseconds
+    }
+
+    init(error: DriveError, delayNanoseconds: UInt64 = 0) {
+        result = .failure(error)
         self.delayNanoseconds = delayNanoseconds
     }
 }
@@ -140,7 +218,7 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         if response.delayNanoseconds > 0 {
             try await Task.sleep(nanoseconds: response.delayNanoseconds)
         }
-        return response.items
+        return try response.result.get()
     }
 
     func downloadFile(id: String) async throws -> DriveFileDownload {
