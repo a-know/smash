@@ -69,11 +69,48 @@ final class GoogleAuthenticationServiceTests: XCTestCase {
         }
     }
 
+    func testStaleRefreshCannotClearCredentialsFromSubsequentSignIn() async throws {
+        let signedInResponse = tokenResponse(
+            accessToken: "new-access",
+            refreshToken: "new-refresh"
+        )
+        let tokenClient = ControlledTokenClient(exchangeResponse: signedInResponse)
+        let tokenStore = FakeRefreshTokenStore(token: "old-refresh")
+        let service = makeService(tokenClient: tokenClient, tokenStore: tokenStore)
+
+        let staleAccessTokenRequest = Task {
+            try await service.validAccessToken()
+        }
+        await tokenClient.waitForRefreshCount(1)
+        try await service.signOut()
+        _ = try await service.signIn()
+
+        await tokenClient.completeNextRefresh(
+            with: .success(
+                tokenResponse(
+                    accessToken: "stale-access",
+                    refreshToken: "stale-refresh"
+                )
+            )
+        )
+
+        do {
+            _ = try await staleAccessTokenRequest.value
+            XCTFail("Expected the stale refresh to be rejected")
+        } catch {
+            XCTAssertEqual(error as? AuthenticationError, .reauthenticationRequired)
+        }
+        XCTAssertEqual(tokenStore.storedToken, "new-refresh")
+        let currentAccessToken = try await service.validAccessToken()
+        XCTAssertEqual(currentAccessToken, AccessToken(rawValue: "new-access"))
+    }
+
     private func makeService(
         tokenClient: ControlledTokenClient,
         tokenStore: FakeRefreshTokenStore
     ) -> GoogleAuthenticationService {
         GoogleAuthenticationService(
+            authorizationFlow: FakeAuthorizationFlow(),
             tokenClient: tokenClient,
             refreshTokenStore: tokenStore,
             configurationProvider: {
@@ -86,9 +123,12 @@ final class GoogleAuthenticationServiceTests: XCTestCase {
         )
     }
 
-    private func tokenResponse(refreshToken: String?) -> GoogleTokenResponse {
+    private func tokenResponse(
+        accessToken: String = "access-1",
+        refreshToken: String?
+    ) -> GoogleTokenResponse {
         GoogleTokenResponse(
-            accessToken: "access-1",
+            accessToken: accessToken,
             expiresIn: 3_600,
             refreshToken: refreshToken,
             scope: GoogleOAuthConfiguration.driveScope,
@@ -97,10 +137,25 @@ final class GoogleAuthenticationServiceTests: XCTestCase {
     }
 }
 
+private struct FakeAuthorizationFlow: GoogleOAuthAuthorizationFlowProtocol {
+    func authorize(configuration: GoogleOAuthConfiguration) async throws -> GoogleAuthorizationGrant {
+        GoogleAuthorizationGrant(
+            code: "authorization-code",
+            codeVerifier: "code-verifier",
+            redirectURI: URL(string: "http://127.0.0.1/oauth2callback")!
+        )
+    }
+}
+
 private actor ControlledTokenClient: GoogleOAuthTokenClientProtocol {
+    private let exchangeResponse: GoogleTokenResponse?
     private var refreshContinuations: [CheckedContinuation<GoogleTokenResponse, any Error>] = []
     private(set) var refreshCount = 0
     private(set) var revokedTokens: [String] = []
+
+    init(exchangeResponse: GoogleTokenResponse? = nil) {
+        self.exchangeResponse = exchangeResponse
+    }
 
     func exchangeAuthorizationCode(
         _ code: String,
@@ -108,7 +163,10 @@ private actor ControlledTokenClient: GoogleOAuthTokenClientProtocol {
         redirectURI: URL,
         configuration: GoogleOAuthConfiguration
     ) async throws -> GoogleTokenResponse {
-        throw AuthenticationError.unexpected
+        guard let exchangeResponse else {
+            throw AuthenticationError.unexpected
+        }
+        return exchangeResponse
     }
 
     func refreshAccessToken(

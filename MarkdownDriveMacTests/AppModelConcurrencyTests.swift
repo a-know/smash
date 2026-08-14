@@ -60,7 +60,33 @@ final class AppModelConcurrencyTests: XCTestCase {
         XCTAssertEqual(appModel.documentState, .idle)
     }
 
-    private func makeAppModel(driveClient: ControlledAppDriveClient) -> AppModel {
+    func testSignOutInvalidatesInFlightVaultRestore() async throws {
+        let driveClient = ControlledAppDriveClient(treeResponses: [])
+        let vaultStore = ControlledAppVaultStore()
+        let appModel = makeAppModel(
+            driveClient: driveClient,
+            vaultStore: vaultStore
+        )
+
+        let restoring = Task { @MainActor in
+            await appModel.restoreSession()
+        }
+        await vaultStore.waitUntilLoadStarts()
+        await appModel.signOut()
+        await vaultStore.completeLoad(
+            with: Vault(rootFolderID: "vault", displayName: "Vault")
+        )
+        await restoring.value
+
+        XCTAssertEqual(appModel.authenticationState, .signedOut)
+        XCTAssertNil(appModel.selectedVault)
+        XCTAssertEqual(appModel.vaultTreeState, .idle)
+    }
+
+    private func makeAppModel(
+        driveClient: ControlledAppDriveClient,
+        vaultStore: any VaultStore = FakeAppVaultStore()
+    ) -> AppModel {
         let authenticationController = AuthenticationController(
             service: FakeAppAuthenticationService()
         )
@@ -70,7 +96,7 @@ final class AppModelConcurrencyTests: XCTestCase {
             vaultTreeLoader: VaultTreeLoader(driveClient: driveClient),
             vaultDocumentLoader: VaultDocumentLoader(driveContentClient: driveClient),
             vaultDocumentSaver: VaultDocumentSaver(driveWriteClient: driveClient),
-            vaultStore: FakeAppVaultStore()
+            vaultStore: vaultStore
         )
     }
 }
@@ -191,6 +217,33 @@ private actor FakeAppVaultStore: VaultStore {
     func saveVault(_ vault: Vault) async throws {}
 
     func clearVault() async throws {}
+}
+
+private actor ControlledAppVaultStore: VaultStore {
+    private var loadContinuation: CheckedContinuation<Vault?, Never>?
+    private var didStartLoad = false
+
+    func loadVault() async throws -> Vault? {
+        didStartLoad = true
+        return await withCheckedContinuation { continuation in
+            loadContinuation = continuation
+        }
+    }
+
+    func saveVault(_ vault: Vault) async throws {}
+
+    func clearVault() async throws {}
+
+    func waitUntilLoadStarts() async {
+        while !didStartLoad {
+            await Task.yield()
+        }
+    }
+
+    func completeLoad(with vault: Vault?) {
+        loadContinuation?.resume(returning: vault)
+        loadContinuation = nil
+    }
 }
 
 private func folder(id: String, name: String) -> DriveItem {

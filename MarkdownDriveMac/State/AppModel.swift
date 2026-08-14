@@ -56,6 +56,7 @@ final class AppModel: ObservableObject {
     private let vaultDocumentSaver: VaultDocumentSaver
     private let vaultStore: any VaultStore
     private var didAttemptRestore = false
+    private var vaultRestoreID: UUID?
     private var vaultBrowserLoadID: UUID?
     private var vaultTreeLoadID: UUID?
     private var documentLoadID: UUID?
@@ -144,6 +145,7 @@ final class AppModel: ObservableObject {
         guard !hasDirtyDocument else {
             return
         }
+        vaultRestoreID = nil
         do {
             let vault = try await driveFolderBrowser.makeVault()
             try await vaultStore.saveVault(vault)
@@ -186,12 +188,25 @@ final class AppModel: ObservableObject {
         guard case .signedIn = authenticationState else {
             return
         }
+        let restoreID = UUID()
+        vaultRestoreID = restoreID
         do {
+            let restoredVault = try await vaultStore.loadVault()
+            guard vaultRestoreID == restoreID,
+                case .signedIn = authenticationState
+            else {
+                return
+            }
             vaultTreeLoadID = nil
-            selectedVault = try await vaultStore.loadVault()
+            selectedVault = restoredVault
             vaultPersistenceError = nil
             await loadVaultTree()
         } catch {
+            guard vaultRestoreID == restoreID,
+                case .signedIn = authenticationState
+            else {
+                return
+            }
             selectedVault = nil
             vaultPersistenceError = "The saved Vault selection could not be restored."
         }
@@ -576,6 +591,7 @@ final class AppModel: ObservableObject {
     }
 
     private func invalidateVaultLoads() {
+        vaultRestoreID = nil
         vaultBrowserLoadID = nil
         vaultTreeLoadID = nil
     }

@@ -100,20 +100,23 @@ actor GoogleAuthenticationService: AuthenticationService {
             throw AuthenticationError.reauthenticationRequired
         }
         currentRefreshToken = refreshToken
+        let generation = sessionGeneration
 
         do {
             _ = try await refreshSession(
                 using: refreshToken,
-                generation: sessionGeneration
+                generation: generation
             )
             guard let currentAccessCredential else {
                 throw AuthenticationError.unexpected
             }
             return currentAccessCredential.accessToken
         } catch AuthenticationError.reauthenticationRequired {
-            currentAccessCredential = nil
-            currentRefreshToken = nil
-            try refreshTokenStore.remove()
+            if sessionGeneration == generation {
+                currentAccessCredential = nil
+                currentRefreshToken = nil
+                try refreshTokenStore.remove()
+            }
             throw AuthenticationError.reauthenticationRequired
         }
     }
