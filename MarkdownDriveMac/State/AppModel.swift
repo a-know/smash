@@ -380,6 +380,7 @@ final class AppModel: ObservableObject {
             id != tree.root.item.id,
             let item = tree.item(id: id),
             item.capabilities?.canRename != false,
+            vaultItemCreationState != .creating,
             vaultItemRenameState != .renaming
         else {
             return false

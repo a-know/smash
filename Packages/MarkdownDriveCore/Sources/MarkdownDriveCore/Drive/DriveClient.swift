@@ -49,10 +49,12 @@ public struct DriveItemRenameResult: Equatable, Sendable {
 public struct DriveFileRevision: Equatable, Sendable {
     public let version: String
     public let modifiedTime: Date
+    public let contentChecksum: String?
 
-    public init(version: String, modifiedTime: Date) {
+    public init(version: String, modifiedTime: Date, contentChecksum: String? = nil) {
         self.version = version
         self.modifiedTime = modifiedTime
+        self.contentChecksum = contentChecksum
     }
 }
 

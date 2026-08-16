@@ -75,11 +75,12 @@ Renaming a note or folder re-fetches the item and its ancestor chain before appl
 `files.update`. A changed name, kind, Trash state, lost `capabilities.canRename` permission, or an
 item moved outside the Vault stops the operation. For an open note, the preflight also compares the
 current Drive revision with the editor's revision, and saving and renaming that note are serialized.
-The returned item, revision, and live ancestry are verified again after the write. An uncertain
-response or post-write verification failure is reported as an unknown write status and is not
-retried automatically. The editor records the verified revision without replacing its text or
-saved-text baseline, so unsaved edits remain dirty and a later save does not mistake the app's own
-rename for an external conflict or hide a remote content change detected before the rename.
+The returned item, revision, content checksum, and live ancestry are verified again after the write.
+A checksum change means another client changed the note content during the rename window, so the
+editor does not adopt the returned revision. An uncertain response or post-write verification
+failure is reported as an unknown write status and is not retried automatically. The editor records
+the verified revision without replacing its text or saved-text baseline, so unsaved edits remain
+dirty and a later save does not mistake the app's own rename for an external conflict.
 
 An OAuth token permits broader Drive access than the Vault. Possession of that token or an arbitrary
 file ID is never treated as proof of Vault membership.
@@ -96,9 +97,10 @@ cancellation, or destructive confirmation.
 
 ## Conflict detection and safe save
 
-The revision snapshot is the pair of Drive `version` and `modifiedTime`. Drive documents `version` as
-a monotonically increasing value that reflects every server-side file change. Both values must match
-the snapshot captured when the file was opened.
+The revision snapshot contains Drive `version`, `modifiedTime`, and the strongest available content
+checksum (`sha256Checksum`, then SHA-1 or MD5 as a compatibility fallback). Drive documents `version`
+as a monotonically increasing value that reflects every server-side file change. The complete
+snapshot must match the one captured when the file was opened.
 
 The normal save path is:
 

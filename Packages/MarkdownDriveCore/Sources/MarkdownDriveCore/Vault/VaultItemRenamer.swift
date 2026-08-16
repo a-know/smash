@@ -21,7 +21,9 @@ public actor VaultItemRenamer {
         let currentItem: DriveItem
         if loadedItem.kind == .file, let expectedRevision {
             let currentMetadata = try await driveClient.getFileRevision(id: itemID)
-            guard currentMetadata.revision == expectedRevision else {
+            guard currentMetadata.revision == expectedRevision,
+                expectedRevision.contentChecksum != nil
+            else {
                 throw DriveError.itemChangedRemotely
             }
             currentItem = currentMetadata.item
@@ -59,6 +61,11 @@ public actor VaultItemRenamer {
         else {
             throw DriveError.writeStatusUnknown
         }
+        if let expectedRevision {
+            guard renameResult.revision?.contentChecksum == expectedRevision.contentChecksum else {
+                throw DriveError.itemChangedRemotely
+            }
+        }
 
         let verifiedItem: DriveItem
         do {
@@ -67,7 +74,11 @@ public actor VaultItemRenamer {
                     throw DriveError.writeStatusUnknown
                 }
                 let verifiedMetadata = try await driveClient.getFileRevision(id: itemID)
-                guard verifiedMetadata.revision == renameRevision else {
+                guard verifiedMetadata.revision == renameRevision,
+                    expectedRevision == nil
+                        || verifiedMetadata.revision.contentChecksum
+                            == expectedRevision?.contentChecksum
+                else {
                     throw DriveError.writeStatusUnknown
                 }
                 verifiedItem = verifiedMetadata.item

@@ -537,6 +537,7 @@ final class GoogleDriveAPIClientTests: XCTestCase {
                 body: fileMetadata(
                     name: "Renamed.md",
                     version: "2",
+                    sha256Checksum: "content-sha256",
                     canRename: true
                 )
             )
@@ -551,6 +552,7 @@ final class GoogleDriveAPIClientTests: XCTestCase {
         XCTAssertEqual(result.item.name, "Renamed.md")
         XCTAssertEqual(result.item.capabilities?.canRename, true)
         XCTAssertEqual(result.revision?.version, "2")
+        XCTAssertEqual(result.revision?.contentChecksum, "content-sha256")
         let requests = await transport.requests
         XCTAssertEqual(requests.count, 1)
         XCTAssertEqual(requests[0].httpMethod, "PATCH")
@@ -643,6 +645,7 @@ final class GoogleDriveAPIClientTests: XCTestCase {
         name: String = "memo.md",
         parentIDs: [String] = ["vault-root"],
         version: String,
+        sha256Checksum: String? = nil,
         canDownload: Bool = true,
         canModifyContent: Bool = true,
         canRename: Bool? = nil
@@ -656,6 +659,7 @@ final class GoogleDriveAPIClientTests: XCTestCase {
           "trashed": false,
           "modifiedTime": "2026-08-12T12:34:56Z",
           "version": "\(version)",
+          \(sha256Checksum.map { "\"sha256Checksum\": \"\($0)\"," } ?? "")
           "capabilities": {
             "canDownload": \(canDownload),
             "canModifyContent": \(canModifyContent)\(canRename.map { ",\n        \"canRename\": \($0)" } ?? "")

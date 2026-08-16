@@ -118,6 +118,34 @@ final class VaultItemRenamerTests: XCTestCase {
         XCTAssertTrue(requests.isEmpty)
     }
 
+    func testContentChangeBetweenPreflightAndRenameIsNotAdopted() async {
+        let original = file(name: "Old.md", canRename: true)
+        let renamed = file(name: "New.md", canRename: true)
+        let client = FakeRenameClient(
+            items: [original, renamed],
+            metadataRevisions: [revision("1")],
+            renameResult: DriveItemRenameResult(
+                item: renamed,
+                revision: revision("3", checksum: "content-b")
+            )
+        )
+        let renamer = VaultItemRenamer(driveClient: client)
+
+        do {
+            _ = try await renamer.rename(
+                itemID: "note",
+                to: "New",
+                in: tree(file: original),
+                expectedRevision: revision("1")
+            )
+            XCTFail("Expected intervening content conflict")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .itemChangedRemotely)
+        }
+        let requests = await client.renameRequests
+        XCTAssertEqual(requests, [RenameRequest(id: "note", name: "New.md")])
+    }
+
     func testRenameCapabilityIsHonored() async {
         let item = file(name: "Old.md", canRename: false)
         let client = FakeRenameClient(items: [item])
@@ -233,8 +261,12 @@ final class VaultItemRenamerTests: XCTestCase {
         )
     }
 
-    private func revision(_ version: String) -> DriveFileRevision {
-        DriveFileRevision(version: version, modifiedTime: .distantPast)
+    private func revision(_ version: String, checksum: String = "content-a") -> DriveFileRevision {
+        DriveFileRevision(
+            version: version,
+            modifiedTime: .distantPast,
+            contentChecksum: checksum
+        )
     }
 }
 
@@ -283,7 +315,11 @@ private actor FakeRenameClient: DriveItemMutationClient {
         if metadataRevisions.isEmpty {
             revision =
                 renameResult?.revision
-                ?? DriveFileRevision(version: "2", modifiedTime: .distantPast)
+                ?? DriveFileRevision(
+                    version: "2",
+                    modifiedTime: .distantPast,
+                    contentChecksum: "content-a"
+                )
         } else {
             revision = metadataRevisions.removeFirst()
         }
@@ -308,7 +344,11 @@ private actor FakeRenameClient: DriveItemMutationClient {
                 capabilities: current.capabilities
             ),
             revision: current.kind == .file
-                ? DriveFileRevision(version: "2", modifiedTime: .distantPast)
+                ? DriveFileRevision(
+                    version: "2",
+                    modifiedTime: .distantPast,
+                    contentChecksum: "content-a"
+                )
                 : nil
         )
     }

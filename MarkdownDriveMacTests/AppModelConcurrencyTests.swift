@@ -333,6 +333,37 @@ final class AppModelConcurrencyTests: XCTestCase {
         await save.value
     }
 
+    func testCreatingVaultItemPreventsOverlappingRename() async throws {
+        let existingFile = file(id: "note", name: "note.md")
+        let createdFolder = folder(id: "created-folder", name: "Drafts")
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [
+                TreeResponse(items: [existingFile]),
+                TreeResponse(items: [existingFile, createdFolder]),
+            ],
+            folderCreationResult: .success(createdFolder),
+            waitsForCreationCompletion: true
+        )
+        let appModel = makeAppModel(driveClient: driveClient)
+        await appModel.restoreSession()
+        appModel.presentNewFolder()
+
+        let creation = Task { @MainActor in
+            await appModel.createNewFolder(name: "Drafts", parentFolderID: "vault")
+        }
+        try await driveClient.waitUntilCreationStarts()
+
+        XCTAssertFalse(appModel.canRenameItem(id: "note"))
+        appModel.presentRename(itemID: "note")
+        XCTAssertFalse(appModel.isRenamePresented)
+        XCTAssertTrue(appModel.isNewFolderPresented)
+        let renameRequestCount = await driveClient.renameRequestCount
+        XCTAssertEqual(renameRequestCount, 0)
+
+        await driveClient.completeCreation()
+        await creation.value
+    }
+
     func testRenamingOpenFilePreventsOverlappingSave() async throws {
         let existingFile = file(id: "note", name: "note.md")
         let renamedFile = file(id: "note", name: "Renamed.md")
@@ -446,14 +477,17 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     private let folderCreationResult: Result<DriveItem, DriveError>
     private let waitsForUpdateCompletion: Bool
     private let waitsForRenameCompletion: Bool
+    private let waitsForCreationCompletion: Bool
     private var renamedItems: [String: DriveItem] = [:]
     private var treeResponses: [TreeResponse]
     private var downloadContinuation: CheckedContinuation<DriveFileDownload, Never>?
     private var updateContinuation: CheckedContinuation<Void, Never>?
     private var renameContinuation: CheckedContinuation<Void, Never>?
+    private var creationContinuation: CheckedContinuation<Void, Never>?
     private var didStartDownload = false
     private var didStartUpdate = false
     private var didStartRename = false
+    private var didStartCreation = false
     private(set) var updateRequestCount = 0
     private(set) var renameRequestCount = 0
 
@@ -463,7 +497,8 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         fileCreationResult: Result<DriveFileMetadata, DriveError> = .failure(.itemNotFound),
         folderCreationResult: Result<DriveItem, DriveError> = .failure(.itemNotFound),
         waitsForUpdateCompletion: Bool = false,
-        waitsForRenameCompletion: Bool = false
+        waitsForRenameCompletion: Bool = false,
+        waitsForCreationCompletion: Bool = false
     ) {
         self.treeResponses = treeResponses
         self.controlledDownload = controlledDownload
@@ -471,6 +506,7 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         self.folderCreationResult = folderCreationResult
         self.waitsForUpdateCompletion = waitsForUpdateCompletion
         self.waitsForRenameCompletion = waitsForRenameCompletion
+        self.waitsForCreationCompletion = waitsForCreationCompletion
     }
 
     func getItem(id: String) async throws -> DriveItem {
@@ -518,7 +554,8 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
             item: item,
             revision: DriveFileRevision(
                 version: "2",
-                modifiedTime: Date(timeIntervalSince1970: 1_700_000_001)
+                modifiedTime: Date(timeIntervalSince1970: 1_700_000_001),
+                contentChecksum: "content-a"
             )
         )
     }
@@ -558,11 +595,23 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         data: Data,
         mimeType: String
     ) async throws -> DriveFileMetadata {
-        try fileCreationResult.get()
+        didStartCreation = true
+        if waitsForCreationCompletion {
+            await withCheckedContinuation { continuation in
+                creationContinuation = continuation
+            }
+        }
+        return try fileCreationResult.get()
     }
 
     func createFolder(name: String, parentID: String) async throws -> DriveItem {
-        try folderCreationResult.get()
+        didStartCreation = true
+        if waitsForCreationCompletion {
+            await withCheckedContinuation { continuation in
+                creationContinuation = continuation
+            }
+        }
+        return try folderCreationResult.get()
     }
 
     func trashItem(id: String) async throws -> DriveItem {
@@ -583,7 +632,8 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
             item: item,
             revision: DriveFileRevision(
                 version: "2",
-                modifiedTime: Date(timeIntervalSince1970: 1_700_000_001)
+                modifiedTime: Date(timeIntervalSince1970: 1_700_000_001),
+                contentChecksum: "content-a"
             )
         )
     }
@@ -623,6 +673,25 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         renameContinuation?.resume()
         renameContinuation = nil
     }
+
+    func waitUntilCreationStarts() async throws {
+        for _ in 0..<500 {
+            if didStartCreation {
+                return
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        throw AppModelTestSynchronizationError.timedOut
+    }
+
+    func completeCreation() {
+        creationContinuation?.resume()
+        creationContinuation = nil
+    }
+}
+
+private enum AppModelTestSynchronizationError: Error {
+    case timedOut
 }
 
 private actor FakeAppAuthenticationService: AuthenticationService {
@@ -704,6 +773,7 @@ private func file(id: String, name: String) -> DriveItem {
 private func revision() -> DriveFileRevision {
     DriveFileRevision(
         version: "1",
-        modifiedTime: Date(timeIntervalSince1970: 1_700_000_000)
+        modifiedTime: Date(timeIntervalSince1970: 1_700_000_000),
+        contentChecksum: "content-a"
     )
 }

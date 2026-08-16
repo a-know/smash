@@ -514,7 +514,7 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
     }
 
     private static let fileFields =
-        "id,name,mimeType,parents,trashed,modifiedTime,version,capabilities(canDownload,canModifyContent,canRename)"
+        "id,name,mimeType,parents,trashed,modifiedTime,version,md5Checksum,sha1Checksum,sha256Checksum,capabilities(canDownload,canModifyContent,canRename)"
     private static let rateLimitReasons = [
         "rateLimitExceeded",
         "sharingRateLimitExceeded",
@@ -581,6 +581,9 @@ private struct GoogleDriveFile: Decodable {
     let trashed: Bool
     let modifiedTime: Date?
     let version: String?
+    let md5Checksum: String?
+    let sha1Checksum: String?
+    let sha256Checksum: String?
     let capabilities: GoogleDriveFileCapabilities?
 
     private enum CodingKeys: String, CodingKey {
@@ -591,6 +594,9 @@ private struct GoogleDriveFile: Decodable {
         case trashed
         case modifiedTime
         case version
+        case md5Checksum
+        case sha1Checksum
+        case sha256Checksum
         case capabilities
     }
 
@@ -602,6 +608,9 @@ private struct GoogleDriveFile: Decodable {
         parents = try container.decodeIfPresent([String].self, forKey: .parents) ?? []
         trashed = try container.decodeIfPresent(Bool.self, forKey: .trashed) ?? false
         version = try container.decodeIfPresent(String.self, forKey: .version)
+        md5Checksum = try container.decodeIfPresent(String.self, forKey: .md5Checksum)
+        sha1Checksum = try container.decodeIfPresent(String.self, forKey: .sha1Checksum)
+        sha256Checksum = try container.decodeIfPresent(String.self, forKey: .sha256Checksum)
         capabilities = try container.decodeIfPresent(
             GoogleDriveFileCapabilities.self,
             forKey: .capabilities
@@ -631,7 +640,11 @@ private struct GoogleDriveFile: Decodable {
         guard let version, let modifiedTime else {
             return nil
         }
-        return DriveFileRevision(version: version, modifiedTime: modifiedTime)
+        return DriveFileRevision(
+            version: version,
+            modifiedTime: modifiedTime,
+            contentChecksum: sha256Checksum ?? sha1Checksum ?? md5Checksum
+        )
     }
 
     var metadata: DriveFileMetadata {
