@@ -99,7 +99,7 @@ final class DriveFolderBrowserTests: XCTestCase {
         let opening = Task {
             try await browser.openFolder(id: "work")
         }
-        try await Task.sleep(nanoseconds: 10_000_000)
+        await client.waitUntilListChildrenStarts(folderID: "work")
         let reloaded = try await browser.loadMyDrive()
 
         do {
@@ -127,7 +127,7 @@ final class DriveFolderBrowserTests: XCTestCase {
         let opening = Task {
             try await browser.openFolder(id: "work")
         }
-        try await Task.sleep(nanoseconds: 10_000_000)
+        await client.waitUntilListChildrenStarts(folderID: "work")
         let returned = try await browser.navigateBack()
 
         do {
@@ -161,6 +161,7 @@ private actor FakeDriveClient: DriveClient {
     private let children: [String: [DriveItem]]
     private let failingFolderIDs: Set<String>
     private let delays: [String: UInt64]
+    private var startedFolderIDs: Set<String> = []
 
     init(
         items: [String: DriveItem],
@@ -182,6 +183,7 @@ private actor FakeDriveClient: DriveClient {
     }
 
     func listChildren(of folderID: String) async throws -> [DriveItem] {
+        startedFolderIDs.insert(folderID)
         if let delay = delays[folderID] {
             try await Task.sleep(nanoseconds: delay)
         }
@@ -189,5 +191,11 @@ private actor FakeDriveClient: DriveClient {
             throw DriveError.networkFailure
         }
         return children[folderID] ?? []
+    }
+
+    func waitUntilListChildrenStarts(folderID: String) async {
+        while !startedFolderIDs.contains(folderID) {
+            await Task.yield()
+        }
     }
 }
