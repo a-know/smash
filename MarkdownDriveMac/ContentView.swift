@@ -694,13 +694,17 @@ private struct VaultTreeNodeRow: View {
                 }
             } label: {
                 Label(node.item.name, systemImage: "folder")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .contextMenu {
+                        renameButton
+                    }
             }
             .tag(node.item.id)
-            .contextMenu {
-                renameButton
-            }
         } else {
             Label(node.item.name, systemImage: "doc.text")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
                 .tag(node.item.id)
                 .contextMenu {
                     renameButton
@@ -719,7 +723,7 @@ private struct VaultTreeNodeRow: View {
         Button("Rename…") {
             appModel.presentRename(itemID: node.item.id)
         }
-        .disabled(node.item.id == appModel.selectedVault?.rootFolderID)
+        .disabled(!appModel.canRenameItem(id: node.item.id))
     }
 }
 

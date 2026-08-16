@@ -367,11 +367,17 @@ final class AppModel: ObservableObject {
     }
 
     var canRenameSelectedItem: Bool {
+        guard let selectedTreeItemID else {
+            return false
+        }
+        return canRenameItem(id: selectedTreeItemID)
+    }
+
+    func canRenameItem(id: String) -> Bool {
         guard case .signedIn = authenticationState,
             case .loaded(let tree) = vaultTreeState,
-            let selectedTreeItemID,
-            selectedTreeItemID != tree.root.item.id,
-            let item = tree.item(id: selectedTreeItemID),
+            id != tree.root.item.id,
+            let item = tree.item(id: id),
             item.capabilities?.canRename != false,
             vaultItemRenameState != .renaming
         else {
@@ -388,13 +394,7 @@ final class AppModel: ObservableObject {
     }
 
     func presentRename(itemID: String) {
-        guard case .signedIn = authenticationState,
-            case .loaded(let tree) = vaultTreeState,
-            itemID != tree.root.item.id,
-            let item = tree.item(id: itemID),
-            item.capabilities?.canRename != false,
-            vaultItemRenameState != .renaming
-        else {
+        guard canRenameItem(id: itemID) else {
             return
         }
         vaultItemCreationID = nil
