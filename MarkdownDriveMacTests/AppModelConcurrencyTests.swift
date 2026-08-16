@@ -489,6 +489,48 @@ final class AppModelConcurrencyTests: XCTestCase {
         XCTAssertEqual(trashRequestCount, 0)
     }
 
+    func testAffectedDocumentCannotBecomeDirtyWhileTrashIsInFlight() async throws {
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [
+                TreeResponse(items: [file(id: "note", name: "note.md")]),
+                TreeResponse(items: []),
+            ],
+            controlledDownload: DriveFileDownload(
+                item: file(id: "note", name: "note.md"),
+                data: Data("remote text".utf8),
+                revision: revision()
+            ),
+            waitsForTrashCompletion: true
+        )
+        let appModel = makeAppModel(driveClient: driveClient)
+        await appModel.restoreSession()
+
+        let documentLoad = Task { @MainActor in
+            await appModel.selectTreeItem(id: "note")
+        }
+        await driveClient.waitUntilDownloadStarts()
+        await driveClient.completeDownload()
+        await documentLoad.value
+        appModel.presentTrash(itemID: "note")
+
+        let trash = Task { @MainActor in
+            await appModel.confirmTrash(itemID: "note")
+        }
+        try await driveClient.waitUntilTrashStarts()
+
+        XCTAssertFalse(appModel.isDocumentEditingEnabled)
+        appModel.updateDocumentText("late unsaved text")
+        guard case .loaded(let document) = appModel.documentState else {
+            return XCTFail("Expected the clean document to remain open while Trash is pending")
+        }
+        XCTAssertEqual(document.text, "remote text")
+        XCTAssertFalse(document.isDirty)
+
+        await driveClient.completeTrash()
+        await trash.value
+        XCTAssertEqual(appModel.documentState, .idle)
+    }
+
     private func makeAppModel(
         driveClient: ControlledAppDriveClient,
         vaultStore: any VaultStore = FakeAppVaultStore()
@@ -534,16 +576,19 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     private let waitsForUpdateCompletion: Bool
     private let waitsForRenameCompletion: Bool
     private let waitsForCreationCompletion: Bool
+    private let waitsForTrashCompletion: Bool
     private var renamedItems: [String: DriveItem] = [:]
     private var treeResponses: [TreeResponse]
     private var downloadContinuation: CheckedContinuation<DriveFileDownload, Never>?
     private var updateContinuation: CheckedContinuation<Void, Never>?
     private var renameContinuation: CheckedContinuation<Void, Never>?
     private var creationContinuation: CheckedContinuation<Void, Never>?
+    private var trashContinuation: CheckedContinuation<Void, Never>?
     private var didStartDownload = false
     private var didStartUpdate = false
     private var didStartRename = false
     private var didStartCreation = false
+    private var didStartTrash = false
     private(set) var updateRequestCount = 0
     private(set) var renameRequestCount = 0
     private(set) var trashRequestCount = 0
@@ -555,7 +600,8 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         folderCreationResult: Result<DriveItem, DriveError> = .failure(.itemNotFound),
         waitsForUpdateCompletion: Bool = false,
         waitsForRenameCompletion: Bool = false,
-        waitsForCreationCompletion: Bool = false
+        waitsForCreationCompletion: Bool = false,
+        waitsForTrashCompletion: Bool = false
     ) {
         self.treeResponses = treeResponses
         self.controlledDownload = controlledDownload
@@ -564,6 +610,7 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         self.waitsForUpdateCompletion = waitsForUpdateCompletion
         self.waitsForRenameCompletion = waitsForRenameCompletion
         self.waitsForCreationCompletion = waitsForCreationCompletion
+        self.waitsForTrashCompletion = waitsForTrashCompletion
     }
 
     func getItem(id: String) async throws -> DriveItem {
@@ -673,6 +720,12 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
 
     func trashItem(id: String) async throws -> DriveItem {
         trashRequestCount += 1
+        didStartTrash = true
+        if waitsForTrashCompletion {
+            await withCheckedContinuation { continuation in
+                trashContinuation = continuation
+            }
+        }
         let currentItem = try await getItem(id: id)
         return DriveItem(
             id: currentItem.id,
@@ -754,6 +807,21 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     func completeCreation() {
         creationContinuation?.resume()
         creationContinuation = nil
+    }
+
+    func waitUntilTrashStarts() async throws {
+        for _ in 0..<500 {
+            if didStartTrash {
+                return
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        throw AppModelTestSynchronizationError.timedOut
+    }
+
+    func completeTrash() {
+        trashContinuation?.resume()
+        trashContinuation = nil
     }
 }
 

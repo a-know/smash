@@ -874,8 +874,11 @@ private struct MarkdownEditorDetail: View {
 
                     Divider()
 
-                    NativeMarkdownEditor(text: documentText)
-                        .accessibilityLabel("Markdown source editor")
+                    NativeMarkdownEditor(
+                        text: documentText,
+                        isEditable: appModel.isDocumentEditingEnabled
+                    )
+                    .accessibilityLabel("Markdown source editor")
                 }
                 .navigationTitle(document.isDirty ? "\(document.name) — Edited" : document.name)
             }

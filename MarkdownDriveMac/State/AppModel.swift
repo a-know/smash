@@ -104,6 +104,7 @@ final class AppModel: ObservableObject {
     private var renameTargetItemID: String?
     private var vaultItemTrashID: UUID?
     private var trashTargetItemID: String?
+    private var trashAffectedItemIDs: Set<String> = []
 
     init(
         authenticationController: AuthenticationController,
@@ -583,6 +584,7 @@ final class AppModel: ObservableObject {
         let trashID = UUID()
         let generation = authenticationGeneration
         vaultItemTrashID = trashID
+        trashAffectedItemIDs = affectedIDs
         isTrashConfirmationPresented = false
         vaultItemTrashState = .trashing
 
@@ -734,6 +736,15 @@ final class AppModel: ObservableObject {
         return document.isDirty
     }
 
+    var isDocumentEditingEnabled: Bool {
+        guard vaultItemTrashState == .trashing,
+            case .loaded(let document) = documentState
+        else {
+            return true
+        }
+        return !trashAffectedItemIDs.contains(document.fileID)
+    }
+
     func setFolderExpanded(id: String, isExpanded: Bool) {
         if isExpanded {
             expandedFolderIDs.insert(id)
@@ -817,7 +828,9 @@ final class AppModel: ObservableObject {
     }
 
     func updateDocumentText(_ text: String) {
-        guard case .loaded(var document) = documentState else {
+        guard isDocumentEditingEnabled,
+            case .loaded(var document) = documentState
+        else {
             return
         }
         document.updateText(text)
@@ -1228,6 +1241,7 @@ final class AppModel: ObservableObject {
     private func resetTrashState() {
         vaultItemTrashID = nil
         trashTargetItemID = nil
+        trashAffectedItemIDs = []
         isTrashConfirmationPresented = false
         isTrashErrorAlertPresented = false
         vaultItemTrashState = .idle

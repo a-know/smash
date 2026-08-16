@@ -3,6 +3,7 @@ import SwiftUI
 
 struct NativeMarkdownEditor: NSViewRepresentable {
     @Binding var text: String
+    let isEditable: Bool
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -18,6 +19,7 @@ struct NativeMarkdownEditor: NSViewRepresentable {
         let textView = NSTextView(frame: scrollView.contentView.bounds)
         textView.delegate = context.coordinator
         textView.string = text
+        textView.isEditable = isEditable
         textView.font = .monospacedSystemFont(
             ofSize: NSFont.systemFontSize,
             weight: .regular
@@ -51,7 +53,11 @@ struct NativeMarkdownEditor: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.text = $text
-        guard let textView = scrollView.documentView as? NSTextView,
+        guard let textView = scrollView.documentView as? NSTextView else {
+            return
+        }
+        textView.isEditable = isEditable
+        guard
             textView.string != text,
             !textView.hasMarkedText()
         else {
