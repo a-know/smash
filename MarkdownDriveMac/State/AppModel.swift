@@ -47,6 +47,13 @@ enum VaultItemRenameState: Equatable {
     case statusUnknown(String)
 }
 
+enum VaultItemTrashState: Equatable {
+    case idle
+    case trashing
+    case failed(String)
+    case statusUnknown(String)
+}
+
 struct VaultFolderDestination: Equatable, Identifiable {
     let id: String
     let displayPath: String
@@ -73,6 +80,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var vaultItemCreationState: VaultItemCreationState = .idle
     @Published private(set) var isRenamePresented = false
     @Published private(set) var vaultItemRenameState: VaultItemRenameState = .idle
+    @Published private(set) var isTrashConfirmationPresented = false
+    @Published private(set) var isTrashErrorAlertPresented = false
+    @Published private(set) var vaultItemTrashState: VaultItemTrashState = .idle
 
     private let authenticationController: AuthenticationController
     private let driveFolderBrowser: DriveFolderBrowser
@@ -81,6 +91,7 @@ final class AppModel: ObservableObject {
     private let vaultDocumentSaver: VaultDocumentSaver
     private let vaultItemCreator: VaultItemCreator
     private let vaultItemRenamer: VaultItemRenamer
+    private let vaultItemTrasher: VaultItemTrasher
     private let vaultStore: any VaultStore
     private var didAttemptRestore = false
     private var authenticationGeneration: UInt64 = 0
@@ -91,6 +102,8 @@ final class AppModel: ObservableObject {
     private var vaultItemCreationID: UUID?
     private var vaultItemRenameID: UUID?
     private var renameTargetItemID: String?
+    private var vaultItemTrashID: UUID?
+    private var trashTargetItemID: String?
 
     init(
         authenticationController: AuthenticationController,
@@ -100,6 +113,7 @@ final class AppModel: ObservableObject {
         vaultDocumentSaver: VaultDocumentSaver,
         vaultItemCreator: VaultItemCreator,
         vaultItemRenamer: VaultItemRenamer,
+        vaultItemTrasher: VaultItemTrasher,
         vaultStore: any VaultStore,
         initialAuthenticationState: AuthenticationState = .signedOut
     ) {
@@ -110,6 +124,7 @@ final class AppModel: ObservableObject {
         self.vaultDocumentSaver = vaultDocumentSaver
         self.vaultItemCreator = vaultItemCreator
         self.vaultItemRenamer = vaultItemRenamer
+        self.vaultItemTrasher = vaultItemTrasher
         self.vaultStore = vaultStore
         authenticationState = initialAuthenticationState
     }
@@ -314,7 +329,9 @@ final class AppModel: ObservableObject {
         guard case .signedIn = authenticationState,
             case .loaded = vaultTreeState,
             vaultItemCreationState != .creating,
-            vaultItemRenameState != .renaming
+            vaultItemRenameState != .renaming,
+            vaultItemTrashState != .trashing,
+            trashTargetItemID == nil
         else {
             return false
         }
@@ -381,7 +398,9 @@ final class AppModel: ObservableObject {
             let item = tree.item(id: id),
             item.capabilities?.canRename != false,
             vaultItemCreationState != .creating,
-            vaultItemRenameState != .renaming
+            vaultItemRenameState != .renaming,
+            vaultItemTrashState != .trashing,
+            trashTargetItemID == nil
         else {
             return false
         }
@@ -477,6 +496,138 @@ final class AppModel: ObservableObject {
             }
             transitionToReauthenticationIfNeeded(error)
         }
+    }
+
+    var trashTargetItem: DriveItem? {
+        guard case .loaded(let tree) = vaultTreeState,
+            let trashTargetItemID,
+            trashTargetItemID != tree.root.item.id
+        else {
+            return nil
+        }
+        return tree.item(id: trashTargetItemID)
+    }
+
+    var canTrashSelectedItem: Bool {
+        guard let selectedTreeItemID else {
+            return false
+        }
+        return canTrashItem(id: selectedTreeItemID)
+    }
+
+    func canTrashItem(id: String) -> Bool {
+        guard case .signedIn = authenticationState,
+            case .loaded(let tree) = vaultTreeState,
+            id != tree.root.item.id,
+            let item = tree.item(id: id),
+            item.capabilities?.canTrash == true,
+            vaultItemCreationState != .creating,
+            vaultItemRenameState != .renaming,
+            vaultItemTrashState != .trashing,
+            trashTargetItemID == nil || trashTargetItemID == id,
+            documentSaveState != .saving
+        else {
+            return false
+        }
+        let affectedIDs = Self.itemIDs(in: tree.root, rootedAt: id)
+        if case .loaded(let document) = documentState,
+            document.isDirty,
+            affectedIDs.contains(document.fileID)
+        {
+            return false
+        }
+        if case .loading(let fileID) = documentState,
+            affectedIDs.contains(fileID)
+        {
+            return false
+        }
+        return true
+    }
+
+    func presentTrashSelectedItem() {
+        guard let selectedTreeItemID else {
+            return
+        }
+        presentTrash(itemID: selectedTreeItemID)
+    }
+
+    func presentTrash(itemID: String) {
+        guard canTrashItem(id: itemID) else {
+            return
+        }
+        vaultItemCreationID = nil
+        isNewNotePresented = false
+        isNewFolderPresented = false
+        vaultItemCreationState = .idle
+        resetRenameState()
+        trashTargetItemID = itemID
+        vaultItemTrashState = .idle
+        isTrashConfirmationPresented = true
+    }
+
+    func dismissTrashConfirmation() {
+        guard vaultItemTrashState != .trashing else {
+            return
+        }
+        resetTrashState()
+    }
+
+    func confirmTrash(itemID: String) async {
+        guard canTrashItem(id: itemID),
+            case .loaded(let tree) = vaultTreeState
+        else {
+            return
+        }
+        trashTargetItemID = itemID
+        let affectedIDs = Self.itemIDs(in: tree.root, rootedAt: itemID)
+        let trashID = UUID()
+        let generation = authenticationGeneration
+        vaultItemTrashID = trashID
+        isTrashConfirmationPresented = false
+        vaultItemTrashState = .trashing
+
+        do {
+            _ = try await vaultItemTrasher.trash(itemID: itemID, in: tree)
+            guard vaultItemTrashID == trashID,
+                authenticationGeneration == generation
+            else {
+                return
+            }
+            if let selectedTreeItemID, affectedIDs.contains(selectedTreeItemID) {
+                self.selectedTreeItemID = nil
+            }
+            if case .loaded(let document) = documentState,
+                affectedIDs.contains(document.fileID)
+            {
+                closeDocumentPreservingExpansion()
+            } else if case .failed(let fileID, _) = documentState,
+                affectedIDs.contains(fileID)
+            {
+                closeDocumentPreservingExpansion()
+            }
+            resetTrashState()
+            await loadVaultTree()
+        } catch {
+            guard vaultItemTrashID == trashID,
+                authenticationGeneration == generation
+            else {
+                return
+            }
+            if let driveError = error as? DriveError,
+                driveError == .writeStatusUnknown
+            {
+                vaultItemTrashState = .statusUnknown(driveError.localizedDescription)
+            } else {
+                vaultItemTrashState = .failed(error.localizedDescription)
+            }
+            isTrashErrorAlertPresented = true
+            transitionToReauthenticationIfNeeded(error)
+        }
+    }
+
+    func dismissTrashErrorAlert() {
+        isTrashErrorAlertPresented = false
+        resetTrashState()
     }
 
     func presentNewNote() {
@@ -599,6 +750,9 @@ final class AppModel: ObservableObject {
             case .loaded(let document) = documentState,
             renameTargetItemID == document.fileID
         {
+            return false
+        }
+        if vaultItemTrashState == .trashing {
             return false
         }
         return true
@@ -975,6 +1129,17 @@ final class AppModel: ObservableObject {
         isSaveErrorAlertPresented = false
     }
 
+    private func closeDocumentPreservingExpansion() {
+        cancelActiveDocumentLoad()
+        documentState = .idle
+        documentSaveState = .idle
+        selectedTreeItemID = nil
+        pendingDocumentFileID = nil
+        isDiscardConfirmationPresented = false
+        isConflictAlertPresented = false
+        isSaveErrorAlertPresented = false
+    }
+
     private func handleItemCreationError(
         _ error: any Error,
         creationID: UUID,
@@ -1007,6 +1172,23 @@ final class AppModel: ObservableObject {
             + node.children.flatMap {
                 folderDestinations(in: $0, parentPath: path)
             }
+    }
+
+    private static func itemIDs(in node: DriveTreeNode, rootedAt targetID: String) -> Set<String> {
+        if node.item.id == targetID {
+            return Set([node.item.id] + node.children.flatMap { allItemIDs(in: $0) })
+        }
+        for child in node.children {
+            let ids = itemIDs(in: child, rootedAt: targetID)
+            if !ids.isEmpty {
+                return ids
+            }
+        }
+        return []
+    }
+
+    private static func allItemIDs(in node: DriveTreeNode) -> [String] {
+        [node.item.id] + node.children.flatMap { allItemIDs(in: $0) }
     }
 
     private func cancelActiveDocumentLoad() {
@@ -1043,6 +1225,14 @@ final class AppModel: ObservableObject {
         vaultItemRenameState = .idle
     }
 
+    private func resetTrashState() {
+        vaultItemTrashID = nil
+        trashTargetItemID = nil
+        isTrashConfirmationPresented = false
+        isTrashErrorAlertPresented = false
+        vaultItemTrashState = .idle
+    }
+
     @discardableResult
     private func beginAuthenticationTransition() -> UInt64 {
         authenticationGeneration &+= 1
@@ -1075,6 +1265,7 @@ final class AppModel: ObservableObject {
         isNewFolderPresented = false
         vaultItemCreationState = .idle
         resetRenameState()
+        resetTrashState()
         if preserveDirtyDocument, documentSaveState == .saving {
             documentSaveState = .idle
         }
