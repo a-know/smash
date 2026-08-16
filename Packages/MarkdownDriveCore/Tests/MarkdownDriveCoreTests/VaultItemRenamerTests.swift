@@ -198,9 +198,9 @@ final class VaultItemRenamerTests: XCTestCase {
             XCTFail("Expected authentication failure")
         } catch {
             XCTAssertEqual(error as? DriveError, .authenticationRequired)
-            let renameRequests = await client.renameRequests
-            XCTAssertEqual(renameRequests, [RenameRequest(id: "note", name: "New.md")])
         }
+        let renameRequests = await client.renameRequests
+        XCTAssertEqual(renameRequests, [RenameRequest(id: "note", name: "New.md")])
     }
 
     private func tree(file: DriveItem? = nil, folder: DriveItem? = nil) -> VaultTree {
