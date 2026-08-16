@@ -6,17 +6,21 @@ final class VaultItemRenamerTests: XCTestCase {
     func testRenamesMarkdownFileAndPreservesExtension() async throws {
         let original = file(name: "Old.md", canRename: true)
         let renamed = file(name: "New.md", canRename: true)
-        let client = FakeRenameClient(items: [original, renamed])
+        let client = FakeRenameClient(
+            items: [original, renamed],
+            metadataRevisions: [revision("1"), revision("2")]
+        )
         let renamer = VaultItemRenamer(driveClient: client)
 
         let result = try await renamer.rename(
             itemID: "note",
             to: "New",
-            in: tree(file: original)
+            in: tree(file: original),
+            expectedRevision: revision("1")
         )
 
         XCTAssertEqual(result.item.name, "New.md")
-        XCTAssertEqual(result.revision, revision())
+        XCTAssertEqual(result.revision, revision("2"))
         let requests = await client.renameRequests
         XCTAssertEqual(requests, [RenameRequest(id: "note", name: "New.md")])
     }
@@ -49,6 +53,29 @@ final class VaultItemRenamerTests: XCTestCase {
                 in: tree(file: loaded)
             )
             XCTFail("Expected remote rename conflict")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .itemChangedRemotely)
+        }
+        let requests = await client.renameRequests
+        XCTAssertTrue(requests.isEmpty)
+    }
+
+    func testRemoteContentChangeIsNotHiddenByRename() async {
+        let original = file(name: "Old.md", canRename: true)
+        let client = FakeRenameClient(
+            items: [original],
+            metadataRevisions: [revision("3")]
+        )
+        let renamer = VaultItemRenamer(driveClient: client)
+
+        do {
+            _ = try await renamer.rename(
+                itemID: "note",
+                to: "New",
+                in: tree(file: original),
+                expectedRevision: revision("1")
+            )
+            XCTFail("Expected remote content conflict")
         } catch {
             XCTAssertEqual(error as? DriveError, .itemChangedRemotely)
         }
@@ -97,7 +124,10 @@ final class VaultItemRenamerTests: XCTestCase {
         let changedAgain = file(name: "Other.md", canRename: true)
         let client = FakeRenameClient(
             items: [original, changedAgain],
-            renameResult: DriveItemRenameResult(item: renamedResponse, revision: revision())
+            renameResult: DriveItemRenameResult(
+                item: renamedResponse,
+                revision: revision("2")
+            )
         )
         let renamer = VaultItemRenamer(driveClient: client)
 
@@ -143,8 +173,8 @@ final class VaultItemRenamerTests: XCTestCase {
         )
     }
 
-    private func revision() -> DriveFileRevision {
-        DriveFileRevision(version: "2", modifiedTime: .distantPast)
+    private func revision(_ version: String) -> DriveFileRevision {
+        DriveFileRevision(version: version, modifiedTime: .distantPast)
     }
 }
 
@@ -155,11 +185,17 @@ private struct RenameRequest: Equatable, Sendable {
 
 private actor FakeRenameClient: DriveItemMutationClient {
     private var items: [DriveItem]
+    private var metadataRevisions: [DriveFileRevision]
     private let renameResult: DriveItemRenameResult?
     private(set) var renameRequests: [RenameRequest] = []
 
-    init(items: [DriveItem], renameResult: DriveItemRenameResult? = nil) {
+    init(
+        items: [DriveItem],
+        metadataRevisions: [DriveFileRevision] = [],
+        renameResult: DriveItemRenameResult? = nil
+    ) {
         self.items = items
+        self.metadataRevisions = metadataRevisions
         self.renameResult = renameResult
     }
 
@@ -168,6 +204,22 @@ private actor FakeRenameClient: DriveItemMutationClient {
             throw DriveError.itemNotFound
         }
         return items.removeFirst()
+    }
+
+    func getFileRevision(id: String) async throws -> DriveFileMetadata {
+        guard !items.isEmpty else {
+            throw DriveError.itemNotFound
+        }
+        let item = items.removeFirst()
+        let revision: DriveFileRevision
+        if metadataRevisions.isEmpty {
+            revision =
+                renameResult?.revision
+                ?? DriveFileRevision(version: "2", modifiedTime: .distantPast)
+        } else {
+            revision = metadataRevisions.removeFirst()
+        }
+        return DriveFileMetadata(item: item, revision: revision)
     }
 
     func renameItem(id: String, name: String) async throws -> DriveItemRenameResult {

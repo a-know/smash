@@ -64,6 +64,17 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
         return try file.metadata
     }
 
+    public func getFileRevision(id: String) async throws -> DriveFileMetadata {
+        let file = try await getFileResource(id: id)
+        guard file.mimeType != Self.folderMimeType else {
+            throw DriveError.itemIsNotFile
+        }
+        guard !file.trashed else {
+            throw DriveError.itemNotFound
+        }
+        return try file.metadata
+    }
+
     public func updateFileContent(
         id: String,
         data: Data,

@@ -329,9 +329,13 @@ private struct RenameItemView: View {
     }
 
     private var canSubmit: Bool {
-        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard let item = appModel.renameTargetItem else {
+            return false
+        }
+        return !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && appModel.vaultItemRenameState != .renaming
             && !hasUnknownStatus
+            && appModel.canRenameItem(id: item.id)
     }
 
     private var hasUnknownStatus: Bool {

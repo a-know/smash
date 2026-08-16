@@ -73,11 +73,13 @@ to enforce the live Vault boundary.
 
 Renaming a note or folder re-fetches the item and its ancestor chain before applying a metadata-only
 `files.update`. A changed name, kind, Trash state, lost `capabilities.canRename` permission, or an
-item moved outside the Vault stops the operation. The returned item and live ancestry are verified
-again after the write. An uncertain response or post-write verification failure is reported as an
-unknown write status and is not retried automatically. For an open note, the editor records the
-revision returned by the rename without replacing its text or saved-text baseline, so unsaved edits
-remain dirty and a later save does not mistake the app's own rename for an external conflict.
+item moved outside the Vault stops the operation. For an open note, the preflight also compares the
+current Drive revision with the editor's revision, and saving and renaming that note are serialized.
+The returned item, revision, and live ancestry are verified again after the write. An uncertain
+response or post-write verification failure is reported as an unknown write status and is not
+retried automatically. The editor records the verified revision without replacing its text or
+saved-text baseline, so unsaved edits remain dirty and a later save does not mistake the app's own
+rename for an external conflict or hide a remote content change detected before the rename.
 
 An OAuth token permits broader Drive access than the Vault. Possession of that token or an arbitrary
 file ID is never treated as proof of Vault membership.

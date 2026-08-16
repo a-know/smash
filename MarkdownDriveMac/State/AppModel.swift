@@ -383,6 +383,12 @@ final class AppModel: ObservableObject {
         else {
             return false
         }
+        if documentSaveState == .saving,
+            case .loaded(let document) = documentState,
+            document.fileID == id
+        {
+            return false
+        }
         return true
     }
 
@@ -417,11 +423,19 @@ final class AppModel: ObservableObject {
     }
 
     func renameTarget(to name: String) async {
-        guard case .loaded(let tree) = vaultTreeState,
-            let renameTargetItemID,
-            vaultItemRenameState != .renaming
+        guard let renameTargetItemID,
+            canRenameItem(id: renameTargetItemID),
+            case .loaded(let tree) = vaultTreeState
         else {
             return
+        }
+        let expectedRevision: DriveFileRevision?
+        if case .loaded(let document) = documentState,
+            document.fileID == renameTargetItemID
+        {
+            expectedRevision = document.remoteRevision
+        } else {
+            expectedRevision = nil
         }
         let renameID = UUID()
         let generation = authenticationGeneration
@@ -432,7 +446,8 @@ final class AppModel: ObservableObject {
             let result = try await vaultItemRenamer.rename(
                 itemID: renameTargetItemID,
                 to: name,
-                in: tree
+                in: tree,
+                expectedRevision: expectedRevision
             )
             guard vaultItemRenameID == renameID,
                 authenticationGeneration == generation
@@ -585,7 +600,16 @@ final class AppModel: ObservableObject {
     }
 
     var canSaveDocument: Bool {
-        hasDirtyDocument && documentSaveState != .saving
+        guard hasDirtyDocument, documentSaveState != .saving else {
+            return false
+        }
+        if vaultItemRenameState == .renaming,
+            case .loaded(let document) = documentState,
+            renameTargetItemID == document.fileID
+        {
+            return false
+        }
+        return true
     }
 
     func selectTreeItem(id: String?) async {

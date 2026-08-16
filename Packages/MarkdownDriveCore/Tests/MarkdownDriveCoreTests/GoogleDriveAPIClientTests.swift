@@ -355,6 +355,28 @@ final class GoogleDriveAPIClientTests: XCTestCase {
         }
     }
 
+    func testGetsRevisionForRenameWithoutContentModificationCapability() async throws {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(
+                statusCode: 200,
+                body: fileMetadata(
+                    version: "4",
+                    canModifyContent: false,
+                    canRename: true
+                )
+            )
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        let metadata = try await client.getFileRevision(id: "file-1")
+
+        XCTAssertEqual(metadata.revision.version, "4")
+        XCTAssertEqual(metadata.item.capabilities?.canRename, true)
+    }
+
     func testCreatesConflictCopyWithMultipartUploadInRequestedParent() async throws {
         let createdMetadata = fileMetadata(
             id: "copy-1",

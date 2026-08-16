@@ -296,6 +296,84 @@ final class AppModelConcurrencyTests: XCTestCase {
         XCTAssertFalse(savedDocument.isDirty)
     }
 
+    func testSavingOpenFilePreventsOverlappingRename() async throws {
+        let existingFile = file(id: "note", name: "note.md")
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [TreeResponse(items: [existingFile])],
+            controlledDownload: DriveFileDownload(
+                item: existingFile,
+                data: Data("saved text".utf8),
+                revision: revision()
+            ),
+            waitsForUpdateCompletion: true
+        )
+        let appModel = makeAppModel(driveClient: driveClient)
+        await appModel.restoreSession()
+
+        let documentLoad = Task { @MainActor in
+            await appModel.selectTreeItem(id: "note")
+        }
+        await driveClient.waitUntilDownloadStarts()
+        await driveClient.completeDownload()
+        await documentLoad.value
+        appModel.updateDocumentText("unsaved local text")
+
+        let save = Task { @MainActor in
+            await appModel.saveDocument()
+        }
+        await driveClient.waitUntilUpdateStarts()
+
+        XCTAssertFalse(appModel.canRenameItem(id: "note"))
+        appModel.presentRename(itemID: "note")
+        XCTAssertFalse(appModel.isRenamePresented)
+        let renameRequestCount = await driveClient.renameRequestCount
+        XCTAssertEqual(renameRequestCount, 0)
+
+        await driveClient.completeUpdate()
+        await save.value
+    }
+
+    func testRenamingOpenFilePreventsOverlappingSave() async throws {
+        let existingFile = file(id: "note", name: "note.md")
+        let renamedFile = file(id: "note", name: "Renamed.md")
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [
+                TreeResponse(items: [existingFile]),
+                TreeResponse(items: [renamedFile]),
+            ],
+            controlledDownload: DriveFileDownload(
+                item: existingFile,
+                data: Data("saved text".utf8),
+                revision: revision()
+            ),
+            waitsForRenameCompletion: true
+        )
+        let appModel = makeAppModel(driveClient: driveClient)
+        await appModel.restoreSession()
+
+        let documentLoad = Task { @MainActor in
+            await appModel.selectTreeItem(id: "note")
+        }
+        await driveClient.waitUntilDownloadStarts()
+        await driveClient.completeDownload()
+        await documentLoad.value
+        appModel.updateDocumentText("unsaved local text")
+        appModel.presentRename(itemID: "note")
+
+        let rename = Task { @MainActor in
+            await appModel.renameTarget(to: "Renamed")
+        }
+        await driveClient.waitUntilRenameStarts()
+
+        XCTAssertFalse(appModel.canSaveDocument)
+        await appModel.saveDocument()
+        let updateRequestCount = await driveClient.updateRequestCount
+        XCTAssertEqual(updateRequestCount, 0)
+
+        await driveClient.completeRename()
+        await rename.value
+    }
+
     func testDuplicateFolderPathsAreDisambiguatedWithDriveIDs() async {
         let driveClient = ControlledAppDriveClient(
             treeResponses: [
@@ -359,21 +437,33 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     private let controlledDownload: DriveFileDownload?
     private let fileCreationResult: Result<DriveFileMetadata, DriveError>
     private let folderCreationResult: Result<DriveItem, DriveError>
+    private let waitsForUpdateCompletion: Bool
+    private let waitsForRenameCompletion: Bool
     private var renamedItems: [String: DriveItem] = [:]
     private var treeResponses: [TreeResponse]
     private var downloadContinuation: CheckedContinuation<DriveFileDownload, Never>?
+    private var updateContinuation: CheckedContinuation<Void, Never>?
+    private var renameContinuation: CheckedContinuation<Void, Never>?
     private var didStartDownload = false
+    private var didStartUpdate = false
+    private var didStartRename = false
+    private(set) var updateRequestCount = 0
+    private(set) var renameRequestCount = 0
 
     init(
         treeResponses: [TreeResponse],
         controlledDownload: DriveFileDownload? = nil,
         fileCreationResult: Result<DriveFileMetadata, DriveError> = .failure(.itemNotFound),
-        folderCreationResult: Result<DriveItem, DriveError> = .failure(.itemNotFound)
+        folderCreationResult: Result<DriveItem, DriveError> = .failure(.itemNotFound),
+        waitsForUpdateCompletion: Bool = false,
+        waitsForRenameCompletion: Bool = false
     ) {
         self.treeResponses = treeResponses
         self.controlledDownload = controlledDownload
         self.fileCreationResult = fileCreationResult
         self.folderCreationResult = folderCreationResult
+        self.waitsForUpdateCompletion = waitsForUpdateCompletion
+        self.waitsForRenameCompletion = waitsForRenameCompletion
     }
 
     func getItem(id: String) async throws -> DriveItem {
@@ -408,8 +498,14 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     }
 
     func getFileMetadata(id: String) async throws -> DriveFileMetadata {
-        guard let item = renamedItems[id] else {
+        guard let item = renamedItems[id] ?? controlledDownload?.item else {
             throw DriveError.itemNotFound
+        }
+        if renamedItems[id] == nil, let controlledDownload {
+            return DriveFileMetadata(
+                item: item,
+                revision: controlledDownload.revision
+            )
         }
         return DriveFileMetadata(
             item: item,
@@ -420,18 +516,30 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         )
     }
 
+    func getFileRevision(id: String) async throws -> DriveFileMetadata {
+        try await getFileMetadata(id: id)
+    }
+
     func updateFileContent(
         id: String,
         data: Data,
         mimeType: String
     ) async throws -> DriveFileMetadata {
-        guard let item = renamedItems[id] else {
+        updateRequestCount += 1
+        didStartUpdate = true
+        if waitsForUpdateCompletion {
+            await withCheckedContinuation { continuation in
+                updateContinuation = continuation
+            }
+        }
+        guard let item = renamedItems[id] ?? controlledDownload?.item else {
             throw DriveError.itemNotFound
         }
+        let version = renamedItems[id] == nil ? "2" : "3"
         return DriveFileMetadata(
             item: item,
             revision: DriveFileRevision(
-                version: "3",
+                version: version,
                 modifiedTime: Date(timeIntervalSince1970: 1_700_000_002)
             )
         )
@@ -455,6 +563,13 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     }
 
     func renameItem(id: String, name: String) async throws -> DriveItemRenameResult {
+        renameRequestCount += 1
+        didStartRename = true
+        if waitsForRenameCompletion {
+            await withCheckedContinuation { continuation in
+                renameContinuation = continuation
+            }
+        }
         let item = file(id: id, name: name)
         renamedItems[id] = item
         return DriveItemRenameResult(
@@ -478,6 +593,28 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         }
         downloadContinuation?.resume(returning: controlledDownload)
         downloadContinuation = nil
+    }
+
+    func waitUntilUpdateStarts() async {
+        while !didStartUpdate {
+            await Task.yield()
+        }
+    }
+
+    func completeUpdate() {
+        updateContinuation?.resume()
+        updateContinuation = nil
+    }
+
+    func waitUntilRenameStarts() async {
+        while !didStartRename {
+            await Task.yield()
+        }
+    }
+
+    func completeRename() {
+        renameContinuation?.resume()
+        renameContinuation = nil
     }
 }
 

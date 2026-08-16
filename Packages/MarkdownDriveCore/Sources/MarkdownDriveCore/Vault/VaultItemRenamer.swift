@@ -8,7 +8,8 @@ public actor VaultItemRenamer {
     public func rename(
         itemID: String,
         to proposedName: String,
-        in tree: VaultTree
+        in tree: VaultTree,
+        expectedRevision: DriveFileRevision? = nil
     ) async throws -> DriveItemRenameResult {
         guard itemID != tree.root.item.id else {
             throw DriveError.vaultRootModificationNotAllowed
@@ -17,7 +18,16 @@ public actor VaultItemRenamer {
             throw DriveError.vaultBoundaryViolation
         }
 
-        let currentItem = try await driveClient.getItem(id: itemID)
+        let currentItem: DriveItem
+        if loadedItem.kind == .file, let expectedRevision {
+            let currentMetadata = try await driveClient.getFileRevision(id: itemID)
+            guard currentMetadata.revision == expectedRevision else {
+                throw DriveError.itemChangedRemotely
+            }
+            currentItem = currentMetadata.item
+        } else {
+            currentItem = try await driveClient.getItem(id: itemID)
+        }
         guard currentItem.kind == loadedItem.kind,
             currentItem.name == loadedItem.name,
             !currentItem.isTrashed
@@ -52,7 +62,18 @@ public actor VaultItemRenamer {
 
         let verifiedItem: DriveItem
         do {
-            verifiedItem = try await driveClient.getItem(id: itemID)
+            if currentItem.kind == .file {
+                guard let renameRevision = renameResult.revision else {
+                    throw DriveError.writeStatusUnknown
+                }
+                let verifiedMetadata = try await driveClient.getFileRevision(id: itemID)
+                guard verifiedMetadata.revision == renameRevision else {
+                    throw DriveError.writeStatusUnknown
+                }
+                verifiedItem = verifiedMetadata.item
+            } else {
+                verifiedItem = try await driveClient.getItem(id: itemID)
+            }
             guard verifiedItem.name == name,
                 verifiedItem.kind == currentItem.kind,
                 !verifiedItem.isTrashed

@@ -32,6 +32,7 @@ public protocol DriveItemCreationClient: DriveFileCreationClient {
 }
 
 public protocol DriveItemMutationClient: DriveItemClient {
+    func getFileRevision(id: String) async throws -> DriveFileMetadata
     func renameItem(id: String, name: String) async throws -> DriveItemRenameResult
 }
 
