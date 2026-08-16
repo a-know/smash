@@ -538,7 +538,8 @@ final class GoogleDriveAPIClientTests: XCTestCase {
                     name: "Renamed.md",
                     version: "2",
                     sha256Checksum: "content-sha256",
-                    canRename: true
+                    canRename: true,
+                    canTrash: true
                 )
             )
         ])
@@ -551,6 +552,7 @@ final class GoogleDriveAPIClientTests: XCTestCase {
 
         XCTAssertEqual(result.item.name, "Renamed.md")
         XCTAssertEqual(result.item.capabilities?.canRename, true)
+        XCTAssertEqual(result.item.capabilities?.canTrash, true)
         XCTAssertEqual(result.revision?.version, "2")
         XCTAssertEqual(result.revision?.contentChecksum, "content-sha256")
         let requests = await transport.requests
@@ -648,7 +650,8 @@ final class GoogleDriveAPIClientTests: XCTestCase {
         sha256Checksum: String? = nil,
         canDownload: Bool = true,
         canModifyContent: Bool = true,
-        canRename: Bool? = nil
+        canRename: Bool? = nil,
+        canTrash: Bool? = nil
     ) -> String {
         """
         {
@@ -662,7 +665,7 @@ final class GoogleDriveAPIClientTests: XCTestCase {
           \(sha256Checksum.map { "\"sha256Checksum\": \"\($0)\"," } ?? "")
           "capabilities": {
             "canDownload": \(canDownload),
-            "canModifyContent": \(canModifyContent)\(canRename.map { ",\n        \"canRename\": \($0)" } ?? "")
+            "canModifyContent": \(canModifyContent)\(canRename.map { ",\n        \"canRename\": \($0)" } ?? "")\(canTrash.map { ",\n        \"canTrash\": \($0)" } ?? "")
           }
         }
         """

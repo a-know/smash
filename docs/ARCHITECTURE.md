@@ -82,6 +82,12 @@ failure is reported as an unknown write status and is not retried automatically.
 the verified revision without replacing its text or saved-text baseline, so unsaved edits remain
 dirty and a later save does not mistake the app's own rename for an external conflict.
 
+Moving an item to Google Drive Trash first re-fetches its metadata and live ancestry, requires the
+item to remain inside the Vault, and requires Drive's explicit `capabilities.canTrash` permission.
+The Vault root is never a valid target. The returned item must match the requested ID, name, and
+kind and be marked as trashed; ambiguous write outcomes are not retried automatically. Items without
+Trash capability are left unchanged for the Vault-local `_SMASH_TRASH` fallback path.
+
 An OAuth token permits broader Drive access than the Vault. Possession of that token or an arbitrary
 file ID is never treated as proof of Vault membership.
 

@@ -5,9 +5,11 @@ public enum DriveItemKind: String, Codable, Hashable, Sendable {
 
 public struct DriveItemCapabilities: Codable, Hashable, Sendable {
     public let canRename: Bool?
+    public let canTrash: Bool?
 
-    public init(canRename: Bool? = nil) {
+    public init(canRename: Bool? = nil, canTrash: Bool? = nil) {
         self.canRename = canRename
+        self.canTrash = canTrash
     }
 }
 
