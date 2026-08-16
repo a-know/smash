@@ -82,6 +82,8 @@ public actor VaultItemRenamer {
             }
             _ = try await VaultBoundaryValidator(driveItemClient: driveClient)
                 .currentParentID(of: verifiedItem, in: tree)
+        } catch DriveError.authenticationRequired {
+            throw DriveError.authenticationRequired
         } catch {
             throw DriveError.writeStatusUnknown
         }

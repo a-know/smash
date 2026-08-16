@@ -366,6 +366,13 @@ final class AppModelConcurrencyTests: XCTestCase {
         await driveClient.waitUntilRenameStarts()
 
         XCTAssertFalse(appModel.canSaveDocument)
+        XCTAssertFalse(appModel.canCreateVaultItems)
+        appModel.presentNewNote()
+        appModel.presentNewFolder()
+        XCTAssertFalse(appModel.isNewNotePresented)
+        XCTAssertFalse(appModel.isNewFolderPresented)
+        XCTAssertTrue(appModel.isRenamePresented)
+        XCTAssertEqual(appModel.vaultItemRenameState, .renaming)
         await appModel.saveDocument()
         let updateRequestCount = await driveClient.updateRequestCount
         XCTAssertEqual(updateRequestCount, 0)

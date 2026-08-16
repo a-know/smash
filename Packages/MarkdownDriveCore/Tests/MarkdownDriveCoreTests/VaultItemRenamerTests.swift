@@ -40,6 +40,41 @@ final class VaultItemRenamerTests: XCTestCase {
         XCTAssertEqual(result.item.name, "New")
     }
 
+    func testAlreadyNormalizedNameDoesNotSendRenameRequest() async throws {
+        let original = file(name: "Same.md", canRename: true)
+        let client = FakeRenameClient(items: [original])
+        let renamer = VaultItemRenamer(driveClient: client)
+
+        let result = try await renamer.rename(
+            itemID: "note",
+            to: "Same",
+            in: tree(file: original)
+        )
+
+        XCTAssertEqual(result.item, original)
+        XCTAssertNil(result.revision)
+        let requests = await client.renameRequests
+        XCTAssertTrue(requests.isEmpty)
+    }
+
+    func testItemAbsentFromLoadedTreeIsRejected() async {
+        let client = FakeRenameClient(items: [])
+        let renamer = VaultItemRenamer(driveClient: client)
+
+        do {
+            _ = try await renamer.rename(
+                itemID: "outside",
+                to: "Other",
+                in: tree()
+            )
+            XCTFail("Expected Vault boundary violation")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .vaultBoundaryViolation)
+        }
+        let requests = await client.renameRequests
+        XCTAssertTrue(requests.isEmpty)
+    }
+
     func testRemoteRenameIsNotOverwritten() async {
         let loaded = file(name: "Old.md", canRename: true)
         let remote = file(name: "Remote.md", canRename: true)
@@ -143,6 +178,29 @@ final class VaultItemRenamerTests: XCTestCase {
         }
     }
 
+    func testPostRenameAuthenticationFailureIsPreserved() async {
+        let original = file(name: "Old.md", canRename: true)
+        let renamed = file(name: "New.md", canRename: true)
+        let client = FakeRenameClient(
+            items: [original, renamed],
+            metadataRevisions: [revision("1")],
+            fileRevisionFailureRequestNumber: 2
+        )
+        let renamer = VaultItemRenamer(driveClient: client)
+
+        do {
+            _ = try await renamer.rename(
+                itemID: "note",
+                to: "New",
+                in: tree(file: original),
+                expectedRevision: revision("1")
+            )
+            XCTFail("Expected authentication failure")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .authenticationRequired)
+        }
+    }
+
     private func tree(file: DriveItem? = nil, folder: DriveItem? = nil) -> VaultTree {
         VaultTree(
             root: DriveTreeNode(
@@ -187,16 +245,20 @@ private actor FakeRenameClient: DriveItemMutationClient {
     private var items: [DriveItem]
     private var metadataRevisions: [DriveFileRevision]
     private let renameResult: DriveItemRenameResult?
+    private let fileRevisionFailureRequestNumber: Int?
+    private var fileRevisionRequestCount = 0
     private(set) var renameRequests: [RenameRequest] = []
 
     init(
         items: [DriveItem],
         metadataRevisions: [DriveFileRevision] = [],
-        renameResult: DriveItemRenameResult? = nil
+        renameResult: DriveItemRenameResult? = nil,
+        fileRevisionFailureRequestNumber: Int? = nil
     ) {
         self.items = items
         self.metadataRevisions = metadataRevisions
         self.renameResult = renameResult
+        self.fileRevisionFailureRequestNumber = fileRevisionFailureRequestNumber
     }
 
     func getItem(id: String) async throws -> DriveItem {
@@ -207,6 +269,10 @@ private actor FakeRenameClient: DriveItemMutationClient {
     }
 
     func getFileRevision(id: String) async throws -> DriveFileMetadata {
+        fileRevisionRequestCount += 1
+        if fileRevisionRequestCount == fileRevisionFailureRequestNumber {
+            throw DriveError.authenticationRequired
+        }
         guard !items.isEmpty else {
             throw DriveError.itemNotFound
         }

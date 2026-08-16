@@ -313,7 +313,8 @@ final class AppModel: ObservableObject {
     var canCreateVaultItems: Bool {
         guard case .signedIn = authenticationState,
             case .loaded = vaultTreeState,
-            vaultItemCreationState != .creating
+            vaultItemCreationState != .creating,
+            vaultItemRenameState != .renaming
         else {
             return false
         }
@@ -416,10 +417,7 @@ final class AppModel: ObservableObject {
         guard vaultItemRenameState != .renaming else {
             return
         }
-        vaultItemRenameID = nil
-        renameTargetItemID = nil
-        isRenamePresented = false
-        vaultItemRenameState = .idle
+        resetRenameState()
     }
 
     func renameTarget(to name: String) async {
@@ -461,8 +459,7 @@ final class AppModel: ObservableObject {
                 document.recordRename(name: result.item.name, revision: revision)
                 documentState = .loaded(document)
             }
-            isRenamePresented = false
-            vaultItemRenameState = .idle
+            resetRenameState()
             await loadVaultTree()
         } catch {
             guard vaultItemRenameID == renameID,
@@ -486,10 +483,7 @@ final class AppModel: ObservableObject {
             return
         }
         vaultItemCreationState = .idle
-        vaultItemRenameID = nil
-        renameTargetItemID = nil
-        isRenamePresented = false
-        vaultItemRenameState = .idle
+        resetRenameState()
         isNewNotePresented = true
     }
 
@@ -498,10 +492,7 @@ final class AppModel: ObservableObject {
             return
         }
         vaultItemCreationState = .idle
-        vaultItemRenameID = nil
-        renameTargetItemID = nil
-        isRenamePresented = false
-        vaultItemRenameState = .idle
+        resetRenameState()
         isNewFolderPresented = true
     }
 
@@ -1044,6 +1035,13 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func resetRenameState() {
+        vaultItemRenameID = nil
+        renameTargetItemID = nil
+        isRenamePresented = false
+        vaultItemRenameState = .idle
+    }
+
     @discardableResult
     private func beginAuthenticationTransition() -> UInt64 {
         authenticationGeneration &+= 1
@@ -1075,10 +1073,7 @@ final class AppModel: ObservableObject {
         isNewNotePresented = false
         isNewFolderPresented = false
         vaultItemCreationState = .idle
-        vaultItemRenameID = nil
-        renameTargetItemID = nil
-        isRenamePresented = false
-        vaultItemRenameState = .idle
+        resetRenameState()
         if preserveDirtyDocument, documentSaveState == .saving {
             documentSaveState = .idle
         }

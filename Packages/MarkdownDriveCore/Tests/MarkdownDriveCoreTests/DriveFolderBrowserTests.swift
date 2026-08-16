@@ -99,7 +99,7 @@ final class DriveFolderBrowserTests: XCTestCase {
         let opening = Task {
             try await browser.openFolder(id: "work")
         }
-        await client.waitUntilListChildrenStarts(folderID: "work")
+        try await client.waitUntilListChildrenStarts(folderID: "work")
         let reloaded = try await browser.loadMyDrive()
 
         do {
@@ -127,7 +127,7 @@ final class DriveFolderBrowserTests: XCTestCase {
         let opening = Task {
             try await browser.openFolder(id: "work")
         }
-        await client.waitUntilListChildrenStarts(folderID: "work")
+        try await client.waitUntilListChildrenStarts(folderID: "work")
         let returned = try await browser.navigateBack()
 
         do {
@@ -154,6 +154,10 @@ final class DriveFolderBrowserTests: XCTestCase {
             isTrashed: isTrashed
         )
     }
+}
+
+private enum TestSynchronizationError: Error {
+    case timedOut
 }
 
 private actor FakeDriveClient: DriveClient {
@@ -193,9 +197,13 @@ private actor FakeDriveClient: DriveClient {
         return children[folderID] ?? []
     }
 
-    func waitUntilListChildrenStarts(folderID: String) async {
-        while !startedFolderIDs.contains(folderID) {
-            await Task.yield()
+    func waitUntilListChildrenStarts(folderID: String) async throws {
+        for _ in 0..<500 {
+            if startedFolderIDs.contains(folderID) {
+                return
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
         }
+        throw TestSynchronizationError.timedOut
     }
 }
