@@ -355,6 +355,28 @@ final class GoogleDriveAPIClientTests: XCTestCase {
         }
     }
 
+    func testGetsRevisionForRenameWithoutContentModificationCapability() async throws {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(
+                statusCode: 200,
+                body: fileMetadata(
+                    version: "4",
+                    canModifyContent: false,
+                    canRename: true
+                )
+            )
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        let metadata = try await client.getFileRevision(id: "file-1")
+
+        XCTAssertEqual(metadata.revision.version, "4")
+        XCTAssertEqual(metadata.item.capabilities?.canRename, true)
+    }
+
     func testCreatesConflictCopyWithMultipartUploadInRequestedParent() async throws {
         let createdMetadata = fileMetadata(
             id: "copy-1",
@@ -508,6 +530,41 @@ final class GoogleDriveAPIClientTests: XCTestCase {
         XCTAssertEqual(metadata, ["trashed": true])
     }
 
+    func testRenamesItemWithMetadataPatchAndSharedDriveSupport() async throws {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(
+                statusCode: 200,
+                body: fileMetadata(
+                    name: "Renamed.md",
+                    version: "2",
+                    sha256Checksum: "content-sha256",
+                    canRename: true
+                )
+            )
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        let result = try await client.renameItem(id: "file-1", name: "Renamed.md")
+
+        XCTAssertEqual(result.item.name, "Renamed.md")
+        XCTAssertEqual(result.item.capabilities?.canRename, true)
+        XCTAssertEqual(result.revision?.version, "2")
+        XCTAssertEqual(result.revision?.contentChecksum, "content-sha256")
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests[0].httpMethod, "PATCH")
+        XCTAssertEqual(requests[0].url?.path, "/drive/v3/files/file-1")
+        XCTAssertEqual(queryValue(named: "supportsAllDrives", in: requests[0]), "true")
+        let body = try XCTUnwrap(requests[0].httpBody)
+        let metadata = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: body) as? [String: String]
+        )
+        XCTAssertEqual(metadata, ["name": "Renamed.md"])
+    }
+
     func testListChildrenClassifies403RateLimitReason() async {
         let transport = FakeDriveHTTPTransport(responses: [
             .success(
@@ -588,8 +645,10 @@ final class GoogleDriveAPIClientTests: XCTestCase {
         name: String = "memo.md",
         parentIDs: [String] = ["vault-root"],
         version: String,
+        sha256Checksum: String? = nil,
         canDownload: Bool = true,
-        canModifyContent: Bool = true
+        canModifyContent: Bool = true,
+        canRename: Bool? = nil
     ) -> String {
         """
         {
@@ -600,9 +659,10 @@ final class GoogleDriveAPIClientTests: XCTestCase {
           "trashed": false,
           "modifiedTime": "2026-08-12T12:34:56Z",
           "version": "\(version)",
+          \(sha256Checksum.map { "\"sha256Checksum\": \"\($0)\"," } ?? "")
           "capabilities": {
             "canDownload": \(canDownload),
-            "canModifyContent": \(canModifyContent)
+            "canModifyContent": \(canModifyContent)\(canRename.map { ",\n        \"canRename\": \($0)" } ?? "")
           }
         }
         """

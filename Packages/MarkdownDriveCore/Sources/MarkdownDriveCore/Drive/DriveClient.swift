@@ -31,13 +31,30 @@ public protocol DriveItemCreationClient: DriveFileCreationClient {
     func trashItem(id: String) async throws -> DriveItem
 }
 
+public protocol DriveItemMutationClient: DriveItemClient {
+    func getFileRevision(id: String) async throws -> DriveFileMetadata
+    func renameItem(id: String, name: String) async throws -> DriveItemRenameResult
+}
+
+public struct DriveItemRenameResult: Equatable, Sendable {
+    public let item: DriveItem
+    public let revision: DriveFileRevision?
+
+    public init(item: DriveItem, revision: DriveFileRevision?) {
+        self.item = item
+        self.revision = revision
+    }
+}
+
 public struct DriveFileRevision: Equatable, Sendable {
     public let version: String
     public let modifiedTime: Date
+    public let contentChecksum: String?
 
-    public init(version: String, modifiedTime: Date) {
+    public init(version: String, modifiedTime: Date, contentChecksum: String? = nil) {
         self.version = version
         self.modifiedTime = modifiedTime
+        self.contentChecksum = contentChecksum
     }
 }
 

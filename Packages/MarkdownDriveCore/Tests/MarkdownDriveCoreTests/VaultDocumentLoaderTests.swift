@@ -66,6 +66,24 @@ final class VaultDocumentLoaderTests: XCTestCase {
         XCTAssertTrue(document.isDirty)
     }
 
+    func testDocumentRenameAdvancesRevisionWithoutDiscardingDirtyText() {
+        var document = MarkdownDocument(
+            fileID: "note",
+            name: "note.md",
+            text: "original",
+            remoteRevision: makeRevision()
+        )
+        document.updateText("unsaved local text")
+        let renamedRevision = DriveFileRevision(version: "2", modifiedTime: Date())
+
+        document.recordRename(name: "Renamed.md", revision: renamedRevision)
+
+        XCTAssertEqual(document.name, "Renamed.md")
+        XCTAssertEqual(document.text, "unsaved local text")
+        XCTAssertEqual(document.remoteRevision, renamedRevision)
+        XCTAssertTrue(document.isDirty)
+    }
+
     func testRejectsArbitraryFileIDBeforeDownloading() async {
         let client = FakeDriveContentClient(result: .failure(.itemNotFound))
         let loader = VaultDocumentLoader(driveContentClient: client)

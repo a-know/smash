@@ -27,6 +27,14 @@ public struct MarkdownDocument: Equatable, Sendable {
         self.text = text
     }
 
+    public mutating func recordRename(
+        name: String,
+        revision: DriveFileRevision
+    ) {
+        self.name = name
+        remoteRevision = revision
+    }
+
     public mutating func markSaved(revision: DriveFileRevision) {
         remoteRevision = revision
         savedText = text

@@ -1,7 +1,7 @@
 import Foundation
 
 public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteClient,
-    DriveItemCreationClient
+    DriveItemCreationClient, DriveItemMutationClient
 {
     public static let folderMimeType = "application/vnd.google-apps.folder"
 
@@ -61,6 +61,17 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
     public func getFileMetadata(id: String) async throws -> DriveFileMetadata {
         let file = try await getFileResource(id: id)
         try validateModification(file)
+        return try file.metadata
+    }
+
+    public func getFileRevision(id: String) async throws -> DriveFileMetadata {
+        let file = try await getFileResource(id: id)
+        guard file.mimeType != Self.folderMimeType else {
+            throw DriveError.itemIsNotFile
+        }
+        guard !file.trashed else {
+            throw DriveError.itemNotFound
+        }
         return try file.metadata
     }
 
@@ -163,6 +174,30 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
             throw DriveError.writeStatusUnknown
         }
         return item
+    }
+
+    public func renameItem(id: String, name: String) async throws -> DriveItemRenameResult {
+        let url = baseURL.appendingPathComponent("files").appendingPathComponent(id)
+        var request = try await authorizedRequest(
+            url: url,
+            queryItems: [
+                URLQueryItem(name: "supportsAllDrives", value: "true"),
+                URLQueryItem(name: "fields", value: Self.fileFields),
+            ]
+        )
+        request.httpMethod = "PATCH"
+        do {
+            request.httpBody = try JSONEncoder().encode(GoogleDriveRenameMetadata(name: name))
+        } catch {
+            throw DriveError.invalidResponse
+        }
+        request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+
+        let result = try await performRenameWrite(request)
+        guard result.item.id == id, result.item.name == name, !result.item.isTrashed else {
+            throw DriveError.writeStatusUnknown
+        }
+        return result
     }
 
     public func listChildren(of folderID: String) async throws -> [DriveItem] {
@@ -404,6 +439,28 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
         }
     }
 
+    private func performRenameWrite(_ request: URLRequest) async throws -> DriveItemRenameResult {
+        let data: Data
+        do {
+            data = try await perform(
+                request,
+                retryAfterAuthenticationFailure: false
+            )
+        } catch DriveError.networkFailure,
+            DriveError.serverUnavailable,
+            DriveError.invalidResponse
+        {
+            throw DriveError.writeStatusUnknown
+        }
+
+        do {
+            let file = try decodeFile(from: data)
+            return DriveItemRenameResult(item: file.driveItem, revision: file.revision)
+        } catch {
+            throw DriveError.writeStatusUnknown
+        }
+    }
+
     private func decodeFile(from data: Data) throws -> GoogleDriveFile {
         do {
             return try JSONDecoder().decode(GoogleDriveFile.self, from: data)
@@ -457,7 +514,7 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
     }
 
     private static let fileFields =
-        "id,name,mimeType,parents,trashed,modifiedTime,version,capabilities(canDownload,canModifyContent)"
+        "id,name,mimeType,parents,trashed,modifiedTime,version,md5Checksum,sha1Checksum,sha256Checksum,capabilities(canDownload,canModifyContent,canRename)"
     private static let rateLimitReasons = [
         "rateLimitExceeded",
         "sharingRateLimitExceeded",
@@ -483,6 +540,10 @@ private struct GoogleDriveCreateFileMetadata: Encodable {
 
 private struct GoogleDriveTrashMetadata: Encodable {
     let trashed: Bool
+}
+
+private struct GoogleDriveRenameMetadata: Encodable {
+    let name: String
 }
 
 private struct GoogleDriveErrorDetails: Decodable {
@@ -520,6 +581,9 @@ private struct GoogleDriveFile: Decodable {
     let trashed: Bool
     let modifiedTime: Date?
     let version: String?
+    let md5Checksum: String?
+    let sha1Checksum: String?
+    let sha256Checksum: String?
     let capabilities: GoogleDriveFileCapabilities?
 
     private enum CodingKeys: String, CodingKey {
@@ -530,6 +594,9 @@ private struct GoogleDriveFile: Decodable {
         case trashed
         case modifiedTime
         case version
+        case md5Checksum
+        case sha1Checksum
+        case sha256Checksum
         case capabilities
     }
 
@@ -541,6 +608,9 @@ private struct GoogleDriveFile: Decodable {
         parents = try container.decodeIfPresent([String].self, forKey: .parents) ?? []
         trashed = try container.decodeIfPresent(Bool.self, forKey: .trashed) ?? false
         version = try container.decodeIfPresent(String.self, forKey: .version)
+        md5Checksum = try container.decodeIfPresent(String.self, forKey: .md5Checksum)
+        sha1Checksum = try container.decodeIfPresent(String.self, forKey: .sha1Checksum)
+        sha256Checksum = try container.decodeIfPresent(String.self, forKey: .sha256Checksum)
         capabilities = try container.decodeIfPresent(
             GoogleDriveFileCapabilities.self,
             forKey: .capabilities
@@ -559,7 +629,10 @@ private struct GoogleDriveFile: Decodable {
             kind: mimeType == GoogleDriveAPIClient.folderMimeType ? .folder : .file,
             mimeType: mimeType,
             parentIDs: parents,
-            isTrashed: trashed
+            isTrashed: trashed,
+            capabilities: capabilities.map {
+                DriveItemCapabilities(canRename: $0.canRename)
+            }
         )
     }
 
@@ -567,7 +640,11 @@ private struct GoogleDriveFile: Decodable {
         guard let version, let modifiedTime else {
             return nil
         }
-        return DriveFileRevision(version: version, modifiedTime: modifiedTime)
+        return DriveFileRevision(
+            version: version,
+            modifiedTime: modifiedTime,
+            contentChecksum: sha256Checksum ?? sha1Checksum ?? md5Checksum
+        )
     }
 
     var metadata: DriveFileMetadata {
@@ -591,15 +668,18 @@ private struct GoogleDriveFile: Decodable {
 private struct GoogleDriveFileCapabilities: Decodable {
     let canDownload: Bool
     let canModifyContent: Bool
+    let canRename: Bool?
 
     private enum CodingKeys: String, CodingKey {
         case canDownload
         case canModifyContent
+        case canRename
     }
 
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         canDownload = try container.decodeIfPresent(Bool.self, forKey: .canDownload) ?? true
         canModifyContent = try container.decodeIfPresent(Bool.self, forKey: .canModifyContent) ?? true
+        canRename = try container.decodeIfPresent(Bool.self, forKey: .canRename)
     }
 }

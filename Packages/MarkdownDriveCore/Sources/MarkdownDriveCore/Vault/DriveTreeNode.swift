@@ -31,6 +31,10 @@ public struct VaultTree: Equatable, Sendable {
         Self.findMarkdownFile(id: id, in: root)
     }
 
+    public func item(id: String) -> DriveItem? {
+        Self.findItem(id: id, in: root)
+    }
+
     public func containsFolder(id: String) -> Bool {
         folder(id: id) != nil
     }
@@ -55,6 +59,13 @@ public struct VaultTree: Equatable, Sendable {
             return node.item
         }
         return node.children.lazy.compactMap { findMarkdownFile(id: id, in: $0) }.first
+    }
+
+    private static func findItem(id: String, in node: DriveTreeNode) -> DriveItem? {
+        if node.item.id == id {
+            return node.item
+        }
+        return node.children.lazy.compactMap { findItem(id: id, in: $0) }.first
     }
 
     private static func findFolder(id: String, in node: DriveTreeNode) -> DriveItem? {
