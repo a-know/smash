@@ -198,6 +198,8 @@ final class VaultItemRenamerTests: XCTestCase {
             XCTFail("Expected authentication failure")
         } catch {
             XCTAssertEqual(error as? DriveError, .authenticationRequired)
+            let renameRequests = await client.renameRequests
+            XCTAssertEqual(renameRequests, [RenameRequest(id: "note", name: "New.md")])
         }
     }
 
