@@ -28,6 +28,16 @@ struct MarkdownDocumentCommands: Commands {
             .disabled(!appModel.canSaveDocument)
         }
 
+        CommandGroup(after: .saveItem) {
+            Button("Refresh Vault") {
+                Task {
+                    await appModel.loadVaultTree()
+                }
+            }
+            .keyboardShortcut("r", modifiers: .command)
+            .disabled(appModel.selectedVault == nil)
+        }
+
         CommandMenu("Item") {
             Button("Rename…") {
                 appModel.presentRenameSelectedItem()
