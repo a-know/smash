@@ -26,9 +26,12 @@ public protocol DriveWriteClient: DriveFileCreationClient {
     func updateFileContent(id: String, data: Data, mimeType: String) async throws -> DriveFileMetadata
 }
 
-public protocol DriveItemCreationClient: DriveFileCreationClient {
-    func createFolder(name: String, parentID: String) async throws -> DriveItem
+public protocol DriveItemTrashClient: DriveItemClient {
     func trashItem(id: String) async throws -> DriveItem
+}
+
+public protocol DriveItemCreationClient: DriveFileCreationClient, DriveItemTrashClient {
+    func createFolder(name: String, parentID: String) async throws -> DriveItem
 }
 
 public protocol DriveItemMutationClient: DriveItemClient {

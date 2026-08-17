@@ -514,7 +514,7 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
     }
 
     private static let fileFields =
-        "id,name,mimeType,parents,trashed,modifiedTime,version,md5Checksum,sha1Checksum,sha256Checksum,capabilities(canDownload,canModifyContent,canRename)"
+        "id,name,mimeType,parents,trashed,modifiedTime,version,md5Checksum,sha1Checksum,sha256Checksum,capabilities(canDownload,canModifyContent,canRename,canTrash)"
     private static let rateLimitReasons = [
         "rateLimitExceeded",
         "sharingRateLimitExceeded",
@@ -631,7 +631,10 @@ private struct GoogleDriveFile: Decodable {
             parentIDs: parents,
             isTrashed: trashed,
             capabilities: capabilities.map {
-                DriveItemCapabilities(canRename: $0.canRename)
+                DriveItemCapabilities(
+                    canRename: $0.canRename,
+                    canTrash: $0.canTrash
+                )
             }
         )
     }
@@ -669,11 +672,13 @@ private struct GoogleDriveFileCapabilities: Decodable {
     let canDownload: Bool
     let canModifyContent: Bool
     let canRename: Bool?
+    let canTrash: Bool?
 
     private enum CodingKeys: String, CodingKey {
         case canDownload
         case canModifyContent
         case canRename
+        case canTrash
     }
 
     init(from decoder: any Decoder) throws {
@@ -681,5 +686,6 @@ private struct GoogleDriveFileCapabilities: Decodable {
         canDownload = try container.decodeIfPresent(Bool.self, forKey: .canDownload) ?? true
         canModifyContent = try container.decodeIfPresent(Bool.self, forKey: .canModifyContent) ?? true
         canRename = try container.decodeIfPresent(Bool.self, forKey: .canRename)
+        canTrash = try container.decodeIfPresent(Bool.self, forKey: .canTrash)
     }
 }

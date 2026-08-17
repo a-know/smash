@@ -33,6 +33,14 @@ struct MarkdownDocumentCommands: Commands {
                 appModel.presentRenameSelectedItem()
             }
             .disabled(!appModel.canRenameSelectedItem)
+
+            Divider()
+
+            Button("Move to Trash") {
+                appModel.presentTrashSelectedItem()
+            }
+            .keyboardShortcut(.delete, modifiers: .command)
+            .disabled(!appModel.canTrashSelectedItem)
         }
     }
 }

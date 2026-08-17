@@ -16,6 +16,7 @@ public enum DriveError: Error, Equatable, Sendable {
     case itemNotFound
     case modificationNotAllowed
     case renameNotAllowed
+    case trashNotAllowed
     case networkFailure
     case permissionDenied
     case rateLimited
@@ -59,6 +60,8 @@ extension DriveError: LocalizedError {
             "Google Drive does not allow this file to be modified."
         case .renameNotAllowed:
             "Google Drive does not allow this item to be renamed."
+        case .trashNotAllowed:
+            "Google Drive does not allow this item to be moved to Trash."
         case .networkFailure:
             "Google Drive could not be reached."
         case .permissionDenied:
@@ -72,7 +75,7 @@ extension DriveError: LocalizedError {
         case .vaultBoundaryViolation:
             "That file is outside the selected Vault."
         case .vaultRootModificationNotAllowed:
-            "The selected Vault root cannot be renamed from this app."
+            "The selected Vault root cannot be modified from this app."
         case .writeStatusUnknown:
             "Google Drive may have received the write, but its result could not be confirmed."
         }

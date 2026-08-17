@@ -129,6 +129,24 @@ private struct VaultPlaceholderView: View {
         .sheet(isPresented: renamePresentation) {
             RenameItemView(appModel: appModel)
         }
+        .confirmationDialog(
+            trashConfirmationTitle,
+            isPresented: trashConfirmationPresentation,
+            titleVisibility: .visible
+        ) {
+            Button("Move to Trash", role: .destructive) {
+                if let itemID = appModel.trashTargetItem?.id {
+                    Task {
+                        await appModel.confirmTrash(itemID: itemID)
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                appModel.dismissTrashConfirmation()
+            }
+        } message: {
+            Text(trashConfirmationMessage)
+        }
         .toolbar {
             ToolbarItem {
                 Button("New Note", systemImage: "square.and.pencil") {
@@ -197,6 +215,11 @@ private struct VaultPlaceholderView: View {
         } message: {
             Text(saveErrorMessage)
         }
+        .alert(trashAlertTitle, isPresented: trashErrorAlert) {
+            Button(trashAlertButtonTitle, role: .cancel) {}
+        } message: {
+            Text(trashErrorMessage)
+        }
     }
 
     private var vaultBrowserPresentation: Binding<Bool> {
@@ -263,6 +286,67 @@ private struct VaultPlaceholderView: View {
                 }
             }
         )
+    }
+
+    private var trashConfirmationPresentation: Binding<Bool> {
+        Binding(
+            get: { appModel.isTrashConfirmationPresented },
+            set: { isPresented in
+                if !isPresented {
+                    appModel.dismissTrashConfirmation()
+                }
+            }
+        )
+    }
+
+    private var trashErrorAlert: Binding<Bool> {
+        Binding(
+            get: { appModel.isTrashErrorAlertPresented },
+            set: { isPresented in
+                if !isPresented {
+                    Task {
+                        await appModel.dismissTrashErrorAlert()
+                    }
+                }
+            }
+        )
+    }
+
+    private var trashConfirmationTitle: String {
+        guard let item = appModel.trashTargetItem else {
+            return "Move item to Trash?"
+        }
+        return "Move “\(item.name)” to Trash?"
+    }
+
+    private var trashConfirmationMessage: String {
+        if appModel.trashTargetItem?.kind == .folder {
+            return "The folder and all of its contents will be moved to Google Drive Trash."
+        }
+        return "The file will be moved to Google Drive Trash."
+    }
+
+    private var trashErrorMessage: String {
+        switch appModel.vaultItemTrashState {
+        case .failed(let message), .statusUnknown(let message):
+            return message
+        default:
+            return "The item could not be moved to Google Drive Trash."
+        }
+    }
+
+    private var trashAlertTitle: String {
+        if case .statusUnknown = appModel.vaultItemTrashState {
+            return "Trash Status Unknown"
+        }
+        return "Could Not Move to Trash"
+    }
+
+    private var trashAlertButtonTitle: String {
+        if case .statusUnknown = appModel.vaultItemTrashState {
+            return "Check Status"
+        }
+        return "OK"
     }
 
     private var saveErrorMessage: String {
@@ -702,6 +786,8 @@ private struct VaultTreeNodeRow: View {
                     .contentShape(Rectangle())
                     .contextMenu {
                         renameButton
+                        Divider()
+                        trashButton
                     }
             }
             .tag(node.item.id)
@@ -712,6 +798,8 @@ private struct VaultTreeNodeRow: View {
                 .tag(node.item.id)
                 .contextMenu {
                     renameButton
+                    Divider()
+                    trashButton
                 }
         }
     }
@@ -728,6 +816,13 @@ private struct VaultTreeNodeRow: View {
             appModel.presentRename(itemID: node.item.id)
         }
         .disabled(!appModel.canRenameItem(id: node.item.id))
+    }
+
+    private var trashButton: some View {
+        Button("Move to Trash", role: .destructive) {
+            appModel.presentTrash(itemID: node.item.id)
+        }
+        .disabled(!appModel.canTrashItem(id: node.item.id))
     }
 }
 
@@ -786,8 +881,11 @@ private struct MarkdownEditorDetail: View {
 
                     Divider()
 
-                    NativeMarkdownEditor(text: documentText)
-                        .accessibilityLabel("Markdown source editor")
+                    NativeMarkdownEditor(
+                        text: documentText,
+                        isEditable: appModel.isDocumentEditingEnabled
+                    )
+                    .accessibilityLabel("Markdown source editor")
                 }
                 .navigationTitle(document.isDirty ? "\(document.name) — Edited" : document.name)
             }
