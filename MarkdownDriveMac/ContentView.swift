@@ -181,10 +181,10 @@ private struct VaultPlaceholderView: View {
             ToolbarItem {
                 Button("Refresh", systemImage: "arrow.clockwise") {
                     Task {
-                        await appModel.loadVaultTree()
+                        await appModel.refreshVault()
                     }
                 }
-                .disabled(appModel.selectedVault == nil)
+                .disabled(!appModel.canRefreshVault)
                 .accessibilityLabel("Refresh Vault contents")
             }
             ToolbarItem {

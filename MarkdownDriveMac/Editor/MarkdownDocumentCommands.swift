@@ -31,11 +31,11 @@ struct MarkdownDocumentCommands: Commands {
         CommandGroup(after: .saveItem) {
             Button("Refresh Vault") {
                 Task {
-                    await appModel.loadVaultTree()
+                    await appModel.refreshVault()
                 }
             }
             .keyboardShortcut("r", modifiers: .command)
-            .disabled(appModel.selectedVault == nil)
+            .disabled(!appModel.canRefreshVault)
         }
 
         CommandMenu("Item") {

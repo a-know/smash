@@ -18,8 +18,8 @@ iOS applications.
 - Safely save to the same Drive file with remote-change detection and explicit conflict choices.
 - Create and rename notes and folders.
 - Move owned items to Google Drive Trash.
-- Recoverably move editable items that cannot be trashed into the Vault-local `_SMASH_TRASH`
-  control folder.
+- Recoverably move non-trashable items into the Vault-local `_SMASH_TRASH` control folder when
+  Google Drive grants permission to move them; otherwise leave them unchanged and show an error.
 
 ## Prerequisites
 

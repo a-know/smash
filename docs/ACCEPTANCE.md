@@ -7,6 +7,11 @@ owned by another account but editable by the test user.
 Record failures with the affected item, whether it is owned or shared, and the exact app-visible
 message. Never include OAuth credentials or document contents in an issue or log.
 
+This is the release gate for the complete MVP, not a claim that every item is implemented or
+validated by the PR that introduced this document. Keep every row unchecked until it has been
+manually verified. Planned Milestone 6 polish remains listed here because it must pass before the
+MVP can be called complete.
+
 ## Setup and restoration
 
 - [ ] A sign-in attempt without local OAuth configuration shows a useful configuration error.
@@ -52,7 +57,9 @@ message. Never include OAuth credentials or document contents in an issue or log
 - [ ] Empty or invalid names are rejected with a useful message.
 - [ ] Renaming an open dirty note preserves its unsaved editor text.
 - [ ] Owned files and folders move to Google Drive Trash after confirmation.
-- [ ] Editable items without Trash capability use `_SMASH_TRASH` through the same confirmation flow.
+- [ ] Items without Trash capability but with Drive move capability use `_SMASH_TRASH` through the
+  same confirmation flow.
+- [ ] Items with neither Trash nor Drive move capability remain unchanged and show a useful error.
 - [ ] A manually restored `_SMASH_TRASH` item reappears after refresh.
 - [ ] Destructive folder actions always require confirmation.
 

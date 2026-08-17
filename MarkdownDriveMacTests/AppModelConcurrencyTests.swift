@@ -36,6 +36,34 @@ final class AppModelConcurrencyTests: XCTestCase {
         XCTAssertEqual(appModel.expandedFolderIDs, ["vault"])
     }
 
+    func testRefreshAvailabilityTracksVaultTreeLoading() async throws {
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [
+                TreeResponse(items: [file(id: "initial", name: "initial.md")]),
+                TreeResponse(
+                    items: [file(id: "refreshed", name: "refreshed.md")],
+                    delayNanoseconds: 100_000_000
+                ),
+            ]
+        )
+        let appModel = makeAppModel(driveClient: driveClient)
+        await appModel.restoreSession()
+        XCTAssertTrue(appModel.canRefreshVault)
+
+        let refresh = Task { @MainActor in
+            await appModel.refreshVault()
+        }
+        try await Task.sleep(nanoseconds: 10_000_000)
+
+        XCTAssertFalse(appModel.canRefreshVault)
+        await appModel.refreshVault()
+
+        await refresh.value
+        XCTAssertTrue(appModel.canRefreshVault)
+        let listChildrenRequestCount = await driveClient.listChildrenRequestCount
+        XCTAssertEqual(listChildrenRequestCount, 2)
+    }
+
     func testClearingSelectionInvalidatesInFlightDocumentLoad() async throws {
         let driveClient = ControlledAppDriveClient(
             treeResponses: [
@@ -716,6 +744,7 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     private(set) var updateRequestCount = 0
     private(set) var renameRequestCount = 0
     private(set) var trashRequestCount = 0
+    private(set) var listChildrenRequestCount = 0
 
     init(
         treeResponses: [TreeResponse],
@@ -763,6 +792,7 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     }
 
     func listChildren(of folderID: String) async throws -> [DriveItem] {
+        listChildrenRequestCount += 1
         guard folderID == "vault", !treeResponses.isEmpty else {
             return []
         }
