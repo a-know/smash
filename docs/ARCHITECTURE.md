@@ -86,7 +86,10 @@ Moving an item to Google Drive Trash first re-fetches its metadata and live ance
 item to remain inside the Vault, and requires Drive's explicit `capabilities.canTrash` permission.
 The Vault root is never a valid target. The returned item must match the requested ID, name, and
 kind and be marked as trashed; ambiguous write outcomes are not retried automatically. Items without
-Trash capability are left unchanged for the Vault-local `_SMASH_TRASH` fallback path.
+Trash capability are left unchanged for the Vault-local `_SMASH_TRASH` fallback path. After an
+ambiguous outcome, mutations affecting the item remain locked until a metadata read confirms whether
+the item is trashed. A confirmed Trash closes affected documents and cancels their pending loads; a
+confirmed non-Trash result unlocks the item after refreshing the Vault tree.
 
 An OAuth token permits broader Drive access than the Vault. Possession of that token or an arbitrary
 file ID is never treated as proof of Vault membership.

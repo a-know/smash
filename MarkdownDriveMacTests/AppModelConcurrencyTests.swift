@@ -531,6 +531,82 @@ final class AppModelConcurrencyTests: XCTestCase {
         XCTAssertEqual(appModel.documentState, .idle)
     }
 
+    func testAffectedDocumentLoadCannotCompleteAfterTrashSucceeds() async throws {
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [
+                TreeResponse(items: [file(id: "note", name: "note.md")]),
+                TreeResponse(items: []),
+            ],
+            controlledDownload: DriveFileDownload(
+                item: file(id: "note", name: "note.md"),
+                data: Data("stale text".utf8),
+                revision: revision()
+            ),
+            waitsForTrashCompletion: true
+        )
+        let appModel = makeAppModel(driveClient: driveClient)
+        await appModel.restoreSession()
+        appModel.presentTrash(itemID: "note")
+
+        let trash = Task { @MainActor in
+            await appModel.confirmTrash(itemID: "note")
+        }
+        try await driveClient.waitUntilTrashStarts()
+        let documentLoad = Task { @MainActor in
+            await appModel.selectTreeItem(id: "note")
+        }
+        await driveClient.waitUntilDownloadStarts()
+
+        await driveClient.completeTrash()
+        await trash.value
+        await driveClient.completeDownload()
+        await documentLoad.value
+
+        XCTAssertEqual(appModel.documentState, .idle)
+        XCTAssertNil(appModel.selectedTreeItemID)
+    }
+
+    func testUnknownTrashStatusRemainsLockedUntilReconciliation() async {
+        let note = file(id: "note", name: "note.md")
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [
+                TreeResponse(items: [note]),
+                TreeResponse(items: []),
+            ],
+            trashError: .writeStatusUnknown,
+            trashReconciliationItem: trashed(note),
+            waitsForTrashReconciliationCompletion: true
+        )
+        let appModel = makeAppModel(driveClient: driveClient)
+        await appModel.restoreSession()
+        appModel.presentTrash(itemID: "note")
+
+        await appModel.confirmTrash(itemID: "note")
+
+        guard case .statusUnknown = appModel.vaultItemTrashState else {
+            return XCTFail("Expected unknown Trash status")
+        }
+        XCTAssertFalse(appModel.canCreateVaultItems)
+        XCTAssertFalse(appModel.canTrashItem(id: "note"))
+
+        let reconciliation = Task { @MainActor in
+            await appModel.dismissTrashErrorAlert()
+        }
+        await driveClient.waitUntilTrashReconciliationStarts()
+        XCTAssertEqual(appModel.vaultItemTrashState, .reconciling)
+        XCTAssertFalse(appModel.canCreateVaultItems)
+        XCTAssertFalse(appModel.canTrashItem(id: "note"))
+
+        await driveClient.completeTrashReconciliation()
+        await reconciliation.value
+
+        XCTAssertEqual(appModel.vaultItemTrashState, .idle)
+        guard case .loaded(let tree) = appModel.vaultTreeState else {
+            return XCTFail("Expected reconciliation to refresh the Vault tree")
+        }
+        XCTAssertNil(tree.item(id: "note"))
+    }
+
     private func makeAppModel(
         driveClient: ControlledAppDriveClient,
         vaultStore: any VaultStore = FakeAppVaultStore()
@@ -577,6 +653,9 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     private let waitsForRenameCompletion: Bool
     private let waitsForCreationCompletion: Bool
     private let waitsForTrashCompletion: Bool
+    private let trashError: DriveError?
+    private let trashReconciliationItem: DriveItem?
+    private let waitsForTrashReconciliationCompletion: Bool
     private var renamedItems: [String: DriveItem] = [:]
     private var treeResponses: [TreeResponse]
     private var downloadContinuation: CheckedContinuation<DriveFileDownload, Never>?
@@ -584,11 +663,14 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     private var renameContinuation: CheckedContinuation<Void, Never>?
     private var creationContinuation: CheckedContinuation<Void, Never>?
     private var trashContinuation: CheckedContinuation<Void, Never>?
+    private var trashReconciliationContinuation: CheckedContinuation<Void, Never>?
     private var didStartDownload = false
     private var didStartUpdate = false
     private var didStartRename = false
     private var didStartCreation = false
     private var didStartTrash = false
+    private var didReturnUnknownTrashStatus = false
+    private var didStartTrashReconciliation = false
     private(set) var updateRequestCount = 0
     private(set) var renameRequestCount = 0
     private(set) var trashRequestCount = 0
@@ -601,7 +683,10 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         waitsForUpdateCompletion: Bool = false,
         waitsForRenameCompletion: Bool = false,
         waitsForCreationCompletion: Bool = false,
-        waitsForTrashCompletion: Bool = false
+        waitsForTrashCompletion: Bool = false,
+        trashError: DriveError? = nil,
+        trashReconciliationItem: DriveItem? = nil,
+        waitsForTrashReconciliationCompletion: Bool = false
     ) {
         self.treeResponses = treeResponses
         self.controlledDownload = controlledDownload
@@ -611,6 +696,9 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         self.waitsForRenameCompletion = waitsForRenameCompletion
         self.waitsForCreationCompletion = waitsForCreationCompletion
         self.waitsForTrashCompletion = waitsForTrashCompletion
+        self.trashError = trashError
+        self.trashReconciliationItem = trashReconciliationItem
+        self.waitsForTrashReconciliationCompletion = waitsForTrashReconciliationCompletion
     }
 
     func getItem(id: String) async throws -> DriveItem {
@@ -619,6 +707,15 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         }
         if let renamedItem = renamedItems[id] {
             return renamedItem
+        }
+        if didReturnUnknownTrashStatus, let trashReconciliationItem {
+            didStartTrashReconciliation = true
+            if waitsForTrashReconciliationCompletion {
+                await withCheckedContinuation { continuation in
+                    trashReconciliationContinuation = continuation
+                }
+            }
+            return trashReconciliationItem
         }
         return file(id: id, name: "\(id).md")
     }
@@ -726,6 +823,10 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
                 trashContinuation = continuation
             }
         }
+        if let trashError {
+            didReturnUnknownTrashStatus = true
+            throw trashError
+        }
         let currentItem = try await getItem(id: id)
         return DriveItem(
             id: currentItem.id,
@@ -823,6 +924,17 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         trashContinuation?.resume()
         trashContinuation = nil
     }
+
+    func waitUntilTrashReconciliationStarts() async {
+        while !didStartTrashReconciliation {
+            await Task.yield()
+        }
+    }
+
+    func completeTrashReconciliation() {
+        trashReconciliationContinuation?.resume()
+        trashReconciliationContinuation = nil
+    }
 }
 
 private enum AppModelTestSynchronizationError: Error {
@@ -912,5 +1024,17 @@ private func revision() -> DriveFileRevision {
         version: "1",
         modifiedTime: Date(timeIntervalSince1970: 1_700_000_000),
         contentChecksum: "content-a"
+    )
+}
+
+private func trashed(_ item: DriveItem) -> DriveItem {
+    DriveItem(
+        id: item.id,
+        name: item.name,
+        kind: item.kind,
+        mimeType: item.mimeType,
+        parentIDs: item.parentIDs,
+        isTrashed: true,
+        capabilities: item.capabilities
     )
 }

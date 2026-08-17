@@ -216,9 +216,7 @@ private struct VaultPlaceholderView: View {
             Text(saveErrorMessage)
         }
         .alert(trashAlertTitle, isPresented: trashErrorAlert) {
-            Button("OK", role: .cancel) {
-                appModel.dismissTrashErrorAlert()
-            }
+            Button(trashAlertButtonTitle, role: .cancel) {}
         } message: {
             Text(trashErrorMessage)
         }
@@ -306,7 +304,9 @@ private struct VaultPlaceholderView: View {
             get: { appModel.isTrashErrorAlertPresented },
             set: { isPresented in
                 if !isPresented {
-                    appModel.dismissTrashErrorAlert()
+                    Task {
+                        await appModel.dismissTrashErrorAlert()
+                    }
                 }
             }
         )
@@ -340,6 +340,13 @@ private struct VaultPlaceholderView: View {
             return "Trash Status Unknown"
         }
         return "Could Not Move to Trash"
+    }
+
+    private var trashAlertButtonTitle: String {
+        if case .statusUnknown = appModel.vaultItemTrashState {
+            return "Check Status"
+        }
+        return "OK"
     }
 
     private var saveErrorMessage: String {

@@ -50,6 +50,7 @@ enum VaultItemRenameState: Equatable {
 enum VaultItemTrashState: Equatable {
     case idle
     case trashing
+    case reconciling
     case failed(String)
     case statusUnknown(String)
 }
@@ -524,7 +525,7 @@ final class AppModel: ObservableObject {
             item.capabilities?.canTrash == true,
             vaultItemCreationState != .creating,
             vaultItemRenameState != .renaming,
-            vaultItemTrashState != .trashing,
+            vaultItemTrashState == .idle,
             trashTargetItemID == nil || trashTargetItemID == id,
             documentSaveState != .saving
         else {
@@ -595,20 +596,7 @@ final class AppModel: ObservableObject {
             else {
                 return
             }
-            if let selectedTreeItemID, affectedIDs.contains(selectedTreeItemID) {
-                self.selectedTreeItemID = nil
-            }
-            if case .loaded(let document) = documentState,
-                affectedIDs.contains(document.fileID)
-            {
-                closeDocumentPreservingExpansion()
-            } else if case .failed(let fileID, _) = documentState,
-                affectedIDs.contains(fileID)
-            {
-                closeDocumentPreservingExpansion()
-            }
-            resetTrashState()
-            await loadVaultTree()
+            await finishConfirmedTrash(affectedIDs: affectedIDs)
         } catch {
             guard vaultItemTrashID == trashID,
                 authenticationGeneration == generation
@@ -627,9 +615,41 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func dismissTrashErrorAlert() {
+    func dismissTrashErrorAlert() async {
         isTrashErrorAlertPresented = false
-        resetTrashState()
+        guard case .statusUnknown = vaultItemTrashState,
+            let trashTargetItemID,
+            let vaultItemTrashID
+        else {
+            resetTrashState()
+            return
+        }
+        let generation = authenticationGeneration
+        vaultItemTrashState = .reconciling
+        do {
+            let result = try await vaultItemTrasher.reconcile(itemID: trashTargetItemID)
+            guard self.vaultItemTrashID == vaultItemTrashID,
+                authenticationGeneration == generation
+            else {
+                return
+            }
+            switch result {
+            case .trashed:
+                await finishConfirmedTrash(affectedIDs: trashAffectedItemIDs)
+            case .notTrashed:
+                resetTrashState()
+                await loadVaultTree()
+            }
+        } catch {
+            guard self.vaultItemTrashID == vaultItemTrashID,
+                authenticationGeneration == generation
+            else {
+                return
+            }
+            vaultItemTrashState = .statusUnknown(error.localizedDescription)
+            isTrashErrorAlertPresented = true
+            transitionToReauthenticationIfNeeded(error)
+        }
     }
 
     func presentNewNote() {
@@ -737,7 +757,7 @@ final class AppModel: ObservableObject {
     }
 
     var isDocumentEditingEnabled: Bool {
-        guard vaultItemTrashState == .trashing,
+        guard isTrashStatusLocked,
             case .loaded(let document) = documentState
         else {
             return true
@@ -763,7 +783,7 @@ final class AppModel: ObservableObject {
         {
             return false
         }
-        if vaultItemTrashState == .trashing {
+        if isTrashStatusLocked {
             return false
         }
         return true
@@ -1151,6 +1171,33 @@ final class AppModel: ObservableObject {
         isDiscardConfirmationPresented = false
         isConflictAlertPresented = false
         isSaveErrorAlertPresented = false
+    }
+
+    private var isTrashStatusLocked: Bool {
+        switch vaultItemTrashState {
+        case .trashing, .reconciling, .statusUnknown:
+            return true
+        case .idle, .failed:
+            return false
+        }
+    }
+
+    private func finishConfirmedTrash(affectedIDs: Set<String>) async {
+        if let selectedTreeItemID, affectedIDs.contains(selectedTreeItemID) {
+            self.selectedTreeItemID = nil
+        }
+        switch documentState {
+        case .loaded(let document) where affectedIDs.contains(document.fileID):
+            closeDocumentPreservingExpansion()
+        case .loading(let fileID) where affectedIDs.contains(fileID):
+            closeDocumentPreservingExpansion()
+        case .failed(let fileID, _) where affectedIDs.contains(fileID):
+            closeDocumentPreservingExpansion()
+        default:
+            break
+        }
+        resetTrashState()
+        await loadVaultTree()
     }
 
     private func handleItemCreationError(

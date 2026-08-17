@@ -1,3 +1,8 @@
+public enum VaultItemTrashReconciliation: Equatable, Sendable {
+    case trashed
+    case notTrashed
+}
+
 public actor VaultItemTrasher {
     private let driveClient: any DriveItemTrashClient
 
@@ -35,5 +40,13 @@ public actor VaultItemTrasher {
             throw DriveError.writeStatusUnknown
         }
         return trashedItem
+    }
+
+    public func reconcile(itemID: String) async throws -> VaultItemTrashReconciliation {
+        let currentItem = try await driveClient.getItem(id: itemID)
+        guard currentItem.id == itemID else {
+            throw DriveError.writeStatusUnknown
+        }
+        return currentItem.isTrashed ? .trashed : .notTrashed
     }
 }

@@ -138,6 +138,39 @@ final class VaultItemTrasherTests: XCTestCase {
         XCTAssertEqual(requests, ["note"])
     }
 
+    func testReconciliationConfirmsTrashedItem() async throws {
+        let file = item(id: "note", name: "Note.md", kind: .file, canTrash: true)
+        let client = FakeTrashClient(currentItems: ["note": trashed(file)])
+        let trasher = VaultItemTrasher(driveClient: client)
+
+        let result = try await trasher.reconcile(itemID: "note")
+
+        XCTAssertEqual(result, .trashed)
+    }
+
+    func testReconciliationConfirmsItemWasNotTrashed() async throws {
+        let file = item(id: "note", name: "Note.md", kind: .file, canTrash: true)
+        let client = FakeTrashClient(currentItems: ["note": file])
+        let trasher = VaultItemTrasher(driveClient: client)
+
+        let result = try await trasher.reconcile(itemID: "note")
+
+        XCTAssertEqual(result, .notTrashed)
+    }
+
+    func testReconciliationRejectsMismatchedResponseIdentity() async {
+        let other = item(id: "other", name: "Other.md", kind: .file, canTrash: true)
+        let client = FakeTrashClient(currentItems: ["note": other])
+        let trasher = VaultItemTrasher(driveClient: client)
+
+        do {
+            _ = try await trasher.reconcile(itemID: "note")
+            XCTFail("Expected unknown write status")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .writeStatusUnknown)
+        }
+    }
+
     private func tree(child: DriveItem? = nil) -> VaultTree {
         VaultTree(
             root: DriveTreeNode(
