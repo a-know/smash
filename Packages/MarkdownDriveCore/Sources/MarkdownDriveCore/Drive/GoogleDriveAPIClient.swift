@@ -1,7 +1,7 @@
 import Foundation
 
 public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteClient,
-    DriveItemCreationClient, DriveItemMutationClient
+    DriveItemCreationClient, DriveItemMutationClient, DriveSoftTrashClient
 {
     public static let folderMimeType = "application/vnd.google-apps.folder"
 
@@ -129,6 +129,14 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
     }
 
     public func createFolder(name: String, parentID: String) async throws -> DriveItem {
+        try await createFolder(name: name, parentID: parentID, appProperties: [:])
+    }
+
+    public func createFolder(
+        name: String,
+        parentID: String,
+        appProperties: [String: String]
+    ) async throws -> DriveItem {
         let url = baseURL.appendingPathComponent("files")
         var request = try await authorizedRequest(
             url: url,
@@ -141,7 +149,8 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
         request.httpBody = try metadataBody(
             name: name,
             parentID: parentID,
-            mimeType: Self.folderMimeType
+            mimeType: Self.folderMimeType,
+            appProperties: appProperties
         )
         request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
 
@@ -150,6 +159,47 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
             throw DriveError.writeStatusUnknown
         }
         return item
+    }
+
+    public func updateAppProperties(
+        id: String,
+        appProperties: [String: String]
+    ) async throws -> DriveItem {
+        let url = baseURL.appendingPathComponent("files").appendingPathComponent(id)
+        var request = try await authorizedRequest(
+            url: url,
+            queryItems: [
+                URLQueryItem(name: "supportsAllDrives", value: "true"),
+                URLQueryItem(name: "fields", value: Self.fileFields),
+            ]
+        )
+        request.httpMethod = "PATCH"
+        request.httpBody = try encodeMetadata(
+            GoogleDriveAppPropertiesMetadata(appProperties: appProperties)
+        )
+        request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        return try await performItemWrite(request)
+    }
+
+    public func moveItem(
+        id: String,
+        fromParentID: String,
+        toParentID: String
+    ) async throws -> DriveItem {
+        let url = baseURL.appendingPathComponent("files").appendingPathComponent(id)
+        var request = try await authorizedRequest(
+            url: url,
+            queryItems: [
+                URLQueryItem(name: "addParents", value: toParentID),
+                URLQueryItem(name: "removeParents", value: fromParentID),
+                URLQueryItem(name: "supportsAllDrives", value: "true"),
+                URLQueryItem(name: "fields", value: Self.fileFields),
+            ]
+        )
+        request.httpMethod = "PATCH"
+        request.httpBody = Data("{}".utf8)
+        request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        return try await performItemWrite(request)
     }
 
     public func trashItem(id: String) async throws -> DriveItem {
@@ -312,16 +362,22 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
     private func metadataBody(
         name: String,
         parentID: String,
-        mimeType: String
+        mimeType: String,
+        appProperties: [String: String] = [:]
     ) throws -> Data {
-        do {
-            return try JSONEncoder().encode(
-                GoogleDriveCreateFileMetadata(
-                    name: name,
-                    parents: [parentID],
-                    mimeType: mimeType
-                )
+        try encodeMetadata(
+            GoogleDriveCreateFileMetadata(
+                name: name,
+                parents: [parentID],
+                mimeType: mimeType,
+                appProperties: appProperties.isEmpty ? nil : appProperties
             )
+        )
+    }
+
+    private func encodeMetadata<T: Encodable>(_ metadata: T) throws -> Data {
+        do {
+            return try JSONEncoder().encode(metadata)
         } catch {
             throw DriveError.invalidResponse
         }
@@ -514,7 +570,7 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
     }
 
     private static let fileFields =
-        "id,name,mimeType,parents,trashed,modifiedTime,version,md5Checksum,sha1Checksum,sha256Checksum,capabilities(canDownload,canModifyContent,canRename,canTrash)"
+        "id,name,mimeType,parents,trashed,modifiedTime,version,md5Checksum,sha1Checksum,sha256Checksum,appProperties,capabilities(canDownload,canModifyContent,canRename,canTrash,canMoveItemWithinDrive)"
     private static let rateLimitReasons = [
         "rateLimitExceeded",
         "sharingRateLimitExceeded",
@@ -530,12 +586,23 @@ private struct GoogleDriveCreateFileMetadata: Encodable {
     let name: String
     let parents: [String]
     let mimeType: String?
+    let appProperties: [String: String]?
 
-    init(name: String, parents: [String], mimeType: String? = nil) {
+    init(
+        name: String,
+        parents: [String],
+        mimeType: String? = nil,
+        appProperties: [String: String]? = nil
+    ) {
         self.name = name
         self.parents = parents
         self.mimeType = mimeType
+        self.appProperties = appProperties
     }
+}
+
+private struct GoogleDriveAppPropertiesMetadata: Encodable {
+    let appProperties: [String: String]
 }
 
 private struct GoogleDriveTrashMetadata: Encodable {
@@ -585,6 +652,7 @@ private struct GoogleDriveFile: Decodable {
     let sha1Checksum: String?
     let sha256Checksum: String?
     let capabilities: GoogleDriveFileCapabilities?
+    let appProperties: [String: String]?
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -598,6 +666,7 @@ private struct GoogleDriveFile: Decodable {
         case sha1Checksum
         case sha256Checksum
         case capabilities
+        case appProperties
     }
 
     init(from decoder: any Decoder) throws {
@@ -614,6 +683,10 @@ private struct GoogleDriveFile: Decodable {
         capabilities = try container.decodeIfPresent(
             GoogleDriveFileCapabilities.self,
             forKey: .capabilities
+        )
+        appProperties = try container.decodeIfPresent(
+            [String: String].self,
+            forKey: .appProperties
         )
         if let value = try container.decodeIfPresent(String.self, forKey: .modifiedTime) {
             modifiedTime = Self.parseModifiedTime(value)
@@ -633,9 +706,11 @@ private struct GoogleDriveFile: Decodable {
             capabilities: capabilities.map {
                 DriveItemCapabilities(
                     canRename: $0.canRename,
-                    canTrash: $0.canTrash
+                    canTrash: $0.canTrash,
+                    canMoveItemWithinDrive: $0.canMoveItemWithinDrive
                 )
-            }
+            },
+            appProperties: appProperties
         )
     }
 
@@ -673,12 +748,14 @@ private struct GoogleDriveFileCapabilities: Decodable {
     let canModifyContent: Bool
     let canRename: Bool?
     let canTrash: Bool?
+    let canMoveItemWithinDrive: Bool?
 
     private enum CodingKeys: String, CodingKey {
         case canDownload
         case canModifyContent
         case canRename
         case canTrash
+        case canMoveItemWithinDrive
     }
 
     init(from decoder: any Decoder) throws {
@@ -687,5 +764,9 @@ private struct GoogleDriveFileCapabilities: Decodable {
         canModifyContent = try container.decodeIfPresent(Bool.self, forKey: .canModifyContent) ?? true
         canRename = try container.decodeIfPresent(Bool.self, forKey: .canRename)
         canTrash = try container.decodeIfPresent(Bool.self, forKey: .canTrash)
+        canMoveItemWithinDrive = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .canMoveItemWithinDrive
+        )
     }
 }

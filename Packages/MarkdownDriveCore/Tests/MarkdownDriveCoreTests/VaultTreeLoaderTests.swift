@@ -60,6 +60,36 @@ final class VaultTreeLoaderTests: XCTestCase {
         XCTAssertEqual(requestedFolderIDs, ["vault"])
     }
 
+    func testExcludesMarkedAppTrashFolderRegardlessOfItsName() async throws {
+        let root = folder(id: "vault", name: "Vault")
+        let controlFolder = DriveItem(
+            id: "soft-trash",
+            name: "User renamed this folder",
+            kind: .folder,
+            parentIDs: ["vault"],
+            appProperties: [
+                VaultSoftTrashMetadata.controlFolderKey:
+                    VaultSoftTrashMetadata.controlFolderValue
+            ]
+        )
+        let client = TreeFakeDriveClient(
+            items: ["vault": root],
+            children: [
+                "vault": [controlFolder, file(id: "visible", name: "Visible.md")],
+                "soft-trash": [file(id: "hidden", name: "Hidden.md")],
+            ]
+        )
+        let loader = VaultTreeLoader(driveClient: client)
+
+        let tree = try await loader.load(
+            vault: Vault(rootFolderID: "vault", displayName: "Vault")
+        )
+
+        XCTAssertEqual(tree.root.children.map(\.item.id), ["visible"])
+        let requestedFolderIDs = await client.requestedFolderIDs()
+        XCTAssertEqual(requestedFolderIDs, ["vault"])
+    }
+
     func testRejectsFolderCycleInsteadOfEscapingTraversal() async throws {
         let root = folder(id: "vault", name: "Vault")
         let child = folder(id: "child", name: "Child")

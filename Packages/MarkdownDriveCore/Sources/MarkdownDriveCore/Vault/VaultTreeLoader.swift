@@ -29,7 +29,7 @@ public actor VaultTreeLoader {
         var nextAncestorIDs = ancestorIDs
         nextAncestorIDs.insert(folder.id)
         let items = try await driveClient.listChildren(of: folder.id)
-            .filter { !$0.isTrashed }
+            .filter { !$0.isTrashed && !VaultSoftTrashMetadata.isControlFolder($0) }
 
         var children: [DriveTreeNode] = []
         for item in items {

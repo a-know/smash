@@ -193,8 +193,10 @@ private struct VaultPlaceholderView: View {
                         await appModel.presentVaultBrowser()
                     }
                 }
-                .disabled(appModel.hasDirtyDocument)
-                .help("Save or discard the current edits before changing Vaults.")
+                .disabled(!appModel.canChangeVault)
+                .help(
+                    "Save or discard edits and resolve pending Trash operations before changing Vaults."
+                )
                 .accessibilityLabel("Choose Google Drive Vault folder")
             }
             ToolbarItem(placement: .primaryAction) {
@@ -321,9 +323,11 @@ private struct VaultPlaceholderView: View {
 
     private var trashConfirmationMessage: String {
         if appModel.trashTargetItem?.kind == .folder {
-            return "The folder and all of its contents will be moved to Google Drive Trash."
+            return
+                "The folder and all of its contents will be moved to Trash. Items that Google Drive cannot trash are moved to the Vault’s recoverable app Trash folder."
         }
-        return "The file will be moved to Google Drive Trash."
+        return
+            "The file will be moved to Trash. If Google Drive cannot trash it, the app uses the Vault’s recoverable app Trash folder."
     }
 
     private var trashErrorMessage: String {

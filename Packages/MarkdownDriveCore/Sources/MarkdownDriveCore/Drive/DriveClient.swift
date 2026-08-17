@@ -30,6 +30,16 @@ public protocol DriveItemTrashClient: DriveItemClient {
     func trashItem(id: String) async throws -> DriveItem
 }
 
+public protocol DriveSoftTrashClient: DriveClient, DriveItemTrashClient {
+    func createFolder(
+        name: String,
+        parentID: String,
+        appProperties: [String: String]
+    ) async throws -> DriveItem
+    func updateAppProperties(id: String, appProperties: [String: String]) async throws -> DriveItem
+    func moveItem(id: String, fromParentID: String, toParentID: String) async throws -> DriveItem
+}
+
 public protocol DriveItemCreationClient: DriveFileCreationClient, DriveItemTrashClient {
     func createFolder(name: String, parentID: String) async throws -> DriveItem
 }
