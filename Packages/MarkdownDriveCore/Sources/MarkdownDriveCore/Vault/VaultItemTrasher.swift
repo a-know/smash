@@ -142,6 +142,16 @@ public actor VaultItemTrasher {
             throw DriveError.writeStatusUnknown
         }
 
+        let controlFolderBeforeMove = try await driveClient.getItem(id: controlFolder.id)
+        guard
+            Self.isValidControlFolder(
+                controlFolderBeforeMove,
+                rootFolderID: tree.root.item.id
+            )
+        else {
+            throw DriveError.itemChangedRemotely
+        }
+
         _ = try await driveClient.moveItem(
             id: currentItem.id,
             fromParentID: fromParentID,
@@ -159,8 +169,15 @@ public actor VaultItemTrasher {
             else {
                 throw DriveError.writeStatusUnknown
             }
-        } catch DriveError.authenticationRequired {
-            throw DriveError.authenticationRequired
+            let verifiedControlFolder = try await driveClient.getItem(id: controlFolder.id)
+            guard
+                Self.isValidControlFolder(
+                    verifiedControlFolder,
+                    rootFolderID: tree.root.item.id
+                )
+            else {
+                throw DriveError.writeStatusUnknown
+            }
         } catch {
             throw DriveError.writeStatusUnknown
         }
@@ -217,7 +234,10 @@ public actor VaultItemTrasher {
             && VaultSoftTrashMetadata.isControlFolder(item)
     }
 
-    public func reconcile(itemID: String) async throws -> VaultItemTrashReconciliation {
+    public func reconcile(
+        itemID: String,
+        in tree: VaultTree
+    ) async throws -> VaultItemTrashReconciliation {
         let currentItem = try await driveClient.getItem(id: itemID)
         guard currentItem.id == itemID else {
             throw DriveError.writeStatusUnknown
@@ -235,7 +255,7 @@ public actor VaultItemTrasher {
         guard parent.id == parentID else {
             throw DriveError.writeStatusUnknown
         }
-        return VaultSoftTrashMetadata.isControlFolder(parent)
+        return Self.isValidControlFolder(parent, rootFolderID: tree.root.item.id)
             ? .vaultSoftTrashed(folderID: parentID)
             : .notTrashed
     }

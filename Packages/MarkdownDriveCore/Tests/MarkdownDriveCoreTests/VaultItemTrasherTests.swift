@@ -194,7 +194,7 @@ final class VaultItemTrasherTests: XCTestCase {
         ])
         let trasher = VaultItemTrasher(driveClient: client)
 
-        let result = try await trasher.reconcile(itemID: "note")
+        let result = try await trasher.reconcile(itemID: "note", in: tree())
 
         XCTAssertEqual(result, .vaultSoftTrashed(folderID: "soft-trash"))
     }
@@ -219,7 +219,7 @@ final class VaultItemTrasherTests: XCTestCase {
         )
         let client = FakeSoftTrashClient(
             items: ["note": file, "soft-trash": controlFolder],
-            failsVerificationAfterMove: true
+            verificationErrorAfterMove: .networkFailure
         )
         let trasher = VaultItemTrasher(driveClient: client)
 
@@ -233,6 +233,88 @@ final class VaultItemTrasherTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? DriveError, .writeStatusUnknown)
         }
+    }
+
+    func testPostMoveAuthenticationFailureHasUnknownStatus() async {
+        let file = item(
+            id: "note",
+            name: "Note.md",
+            kind: .file,
+            canTrash: false,
+            canMoveItemWithinDrive: true
+        )
+        let controlFolder = markedControlFolder()
+        let client = FakeSoftTrashClient(
+            items: ["note": file, "soft-trash": controlFolder],
+            verificationErrorAfterMove: .authenticationRequired
+        )
+        let trasher = VaultItemTrasher(driveClient: client)
+
+        do {
+            _ = try await trasher.trash(
+                itemID: "note",
+                in: tree(child: file),
+                softTrashFolderID: "soft-trash"
+            )
+            XCTFail("Expected unknown move status")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .writeStatusUnknown)
+        }
+    }
+
+    func testControlFolderMovedAfterItemMoveHasUnknownStatus() async {
+        let file = item(
+            id: "note",
+            name: "Note.md",
+            kind: .file,
+            canTrash: false,
+            canMoveItemWithinDrive: true
+        )
+        let controlFolder = markedControlFolder()
+        let client = FakeSoftTrashClient(
+            items: ["note": file, "soft-trash": controlFolder],
+            movesControlFolderOutsideAfterMove: true
+        )
+        let trasher = VaultItemTrasher(driveClient: client)
+
+        do {
+            _ = try await trasher.trash(
+                itemID: "note",
+                in: tree(child: file),
+                softTrashFolderID: "soft-trash"
+            )
+            XCTFail("Expected unknown control folder status")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .writeStatusUnknown)
+        }
+    }
+
+    func testReconciliationRejectsMarkedFolderOutsideSelectedVault() async throws {
+        let controlFolder = markedControlFolder(parentID: "other-vault")
+        let file = softDeletedItem(parentID: controlFolder.id)
+        let client = FakeSoftTrashClient(items: [
+            "note": file,
+            "soft-trash": controlFolder,
+        ])
+        let trasher = VaultItemTrasher(driveClient: client)
+
+        let result = try await trasher.reconcile(itemID: "note", in: tree())
+
+        XCTAssertEqual(result, .notTrashed)
+    }
+
+    func testReconciliationRejectsTrashedMarkedFolder() async throws {
+        let controlFolder = markedControlFolder(isTrashed: true)
+        let file = softDeletedItem(parentID: controlFolder.id)
+        let client = FakeSoftTrashClient(items: [
+            "note": file,
+            "soft-trash": controlFolder,
+        ])
+        let trasher = VaultItemTrasher(driveClient: client)
+
+        let result = try await trasher.reconcile(itemID: "note", in: tree())
+
+        XCTAssertEqual(result, .notTrashed)
     }
 
     func testMalformedTrashResultHasUnknownStatus() async {
@@ -258,7 +340,7 @@ final class VaultItemTrasherTests: XCTestCase {
         let client = FakeTrashClient(currentItems: ["note": trashed(file)])
         let trasher = VaultItemTrasher(driveClient: client)
 
-        let result = try await trasher.reconcile(itemID: "note")
+        let result = try await trasher.reconcile(itemID: "note", in: tree(child: file))
 
         XCTAssertEqual(result, .trashed)
     }
@@ -268,7 +350,7 @@ final class VaultItemTrasherTests: XCTestCase {
         let client = FakeTrashClient(currentItems: ["note": file])
         let trasher = VaultItemTrasher(driveClient: client)
 
-        let result = try await trasher.reconcile(itemID: "note")
+        let result = try await trasher.reconcile(itemID: "note", in: tree(child: file))
 
         XCTAssertEqual(result, .notTrashed)
     }
@@ -279,7 +361,7 @@ final class VaultItemTrasherTests: XCTestCase {
         let trasher = VaultItemTrasher(driveClient: client)
 
         do {
-            _ = try await trasher.reconcile(itemID: "note")
+            _ = try await trasher.reconcile(itemID: "note", in: tree())
             XCTFail("Expected unknown write status")
         } catch {
             XCTAssertEqual(error as? DriveError, .writeStatusUnknown)
@@ -292,6 +374,33 @@ final class VaultItemTrasherTests: XCTestCase {
                 item: DriveItem(id: "vault", name: "Vault", kind: .folder),
                 children: child.map { [DriveTreeNode(item: $0)] } ?? []
             )
+        )
+    }
+
+    private func markedControlFolder(
+        parentID: String = "vault",
+        isTrashed: Bool = false
+    ) -> DriveItem {
+        DriveItem(
+            id: "soft-trash",
+            name: VaultSoftTrashMetadata.folderName,
+            kind: .folder,
+            parentIDs: [parentID],
+            isTrashed: isTrashed,
+            appProperties: [
+                VaultSoftTrashMetadata.controlFolderKey:
+                    VaultSoftTrashMetadata.controlFolderValue
+            ]
+        )
+    }
+
+    private func softDeletedItem(parentID: String) -> DriveItem {
+        DriveItem(
+            id: "note",
+            name: "Note.md",
+            kind: .file,
+            parentIDs: [parentID],
+            appProperties: [VaultSoftTrashMetadata.softDeletedKey: "true"]
         )
     }
 
@@ -331,23 +440,26 @@ final class VaultItemTrasherTests: XCTestCase {
 
 private actor FakeSoftTrashClient: DriveSoftTrashClient {
     private var items: [String: DriveItem]
-    private let failsVerificationAfterMove: Bool
+    private let verificationErrorAfterMove: DriveError?
+    private let movesControlFolderOutsideAfterMove: Bool
     private(set) var operations: [String] = []
 
     init(
         items: [String: DriveItem],
-        failsVerificationAfterMove: Bool = false
+        verificationErrorAfterMove: DriveError? = nil,
+        movesControlFolderOutsideAfterMove: Bool = false
     ) {
         self.items = items
-        self.failsVerificationAfterMove = failsVerificationAfterMove
+        self.verificationErrorAfterMove = verificationErrorAfterMove
+        self.movesControlFolderOutsideAfterMove = movesControlFolderOutsideAfterMove
     }
 
     func getItem(id: String) async throws -> DriveItem {
-        if failsVerificationAfterMove,
+        if let verificationErrorAfterMove,
             operations.contains(where: { $0.hasPrefix("move:") }),
             id == "note"
         {
-            throw DriveError.networkFailure
+            throw verificationErrorAfterMove
         }
         guard let item = items[id] else {
             throw DriveError.itemNotFound
@@ -421,6 +533,20 @@ private actor FakeSoftTrashClient: DriveSoftTrashClient {
             appProperties: item.appProperties
         )
         items[id] = moved
+        if movesControlFolderOutsideAfterMove,
+            let controlFolder = items[toParentID]
+        {
+            items[toParentID] = DriveItem(
+                id: controlFolder.id,
+                name: controlFolder.name,
+                kind: controlFolder.kind,
+                mimeType: controlFolder.mimeType,
+                parentIDs: ["outside"],
+                isTrashed: controlFolder.isTrashed,
+                capabilities: controlFolder.capabilities,
+                appProperties: controlFolder.appProperties
+            )
+        }
         operations.append("move:\(id):\(fromParentID):\(toParentID)")
         return moved
     }

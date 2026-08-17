@@ -603,6 +603,11 @@ final class AppModel: ObservableObject {
             }
             if let softTrashFolderID = result.softTrashFolderID {
                 await persistSoftTrashFolderID(softTrashFolderID)
+                guard vaultItemTrashID == trashID,
+                    authenticationGeneration == generation
+                else {
+                    return
+                }
             }
             await finishConfirmedTrash(affectedIDs: affectedIDs)
         } catch {
@@ -635,7 +640,13 @@ final class AppModel: ObservableObject {
         let generation = authenticationGeneration
         vaultItemTrashState = .reconciling
         do {
-            let result = try await vaultItemTrasher.reconcile(itemID: trashTargetItemID)
+            guard case .loaded(let tree) = vaultTreeState else {
+                throw DriveError.writeStatusUnknown
+            }
+            let result = try await vaultItemTrasher.reconcile(
+                itemID: trashTargetItemID,
+                in: tree
+            )
             guard self.vaultItemTrashID == vaultItemTrashID,
                 authenticationGeneration == generation
             else {
@@ -646,6 +657,11 @@ final class AppModel: ObservableObject {
                 await finishConfirmedTrash(affectedIDs: trashAffectedItemIDs)
             case .vaultSoftTrashed(let folderID):
                 await persistSoftTrashFolderID(folderID)
+                guard self.vaultItemTrashID == vaultItemTrashID,
+                    authenticationGeneration == generation
+                else {
+                    return
+                }
                 await finishConfirmedTrash(affectedIDs: trashAffectedItemIDs)
             case .notTrashed:
                 resetTrashState()
