@@ -329,7 +329,9 @@ final class AppModel: ObservableObject {
     }
 
     var canRefreshVault: Bool {
-        guard selectedVault != nil else {
+        guard case .signedIn = authenticationState,
+            selectedVault != nil
+        else {
             return false
         }
         if case .loading = vaultTreeState {

@@ -40,11 +40,9 @@ final class AppModelConcurrencyTests: XCTestCase {
         let driveClient = ControlledAppDriveClient(
             treeResponses: [
                 TreeResponse(items: [file(id: "initial", name: "initial.md")]),
-                TreeResponse(
-                    items: [file(id: "refreshed", name: "refreshed.md")],
-                    delayNanoseconds: 100_000_000
-                ),
-            ]
+                TreeResponse(items: [file(id: "refreshed", name: "refreshed.md")]),
+            ],
+            waitsForSecondListChildrenCompletion: true
         )
         let appModel = makeAppModel(driveClient: driveClient)
         await appModel.restoreSession()
@@ -53,15 +51,32 @@ final class AppModelConcurrencyTests: XCTestCase {
         let refresh = Task { @MainActor in
             await appModel.refreshVault()
         }
-        try await Task.sleep(nanoseconds: 10_000_000)
+        try await driveClient.waitUntilSecondListChildrenStarts()
 
         XCTAssertFalse(appModel.canRefreshVault)
         await appModel.refreshVault()
+        await driveClient.completeSecondListChildren()
 
         await refresh.value
         XCTAssertTrue(appModel.canRefreshVault)
         let listChildrenRequestCount = await driveClient.listChildrenRequestCount
         XCTAssertEqual(listChildrenRequestCount, 2)
+    }
+
+    func testRefreshIsUnavailableAfterAuthenticationFailure() async {
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [
+                TreeResponse(items: [file(id: "initial", name: "initial.md")]),
+                TreeResponse(error: .authenticationRequired),
+            ]
+        )
+        let appModel = makeAppModel(driveClient: driveClient)
+        await appModel.restoreSession()
+
+        await appModel.refreshVault()
+
+        XCTAssertNotNil(appModel.selectedVault)
+        XCTAssertFalse(appModel.canRefreshVault)
     }
 
     func testClearingSelectionInvalidatesInFlightDocumentLoad() async throws {
@@ -726,6 +741,7 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     private let trashError: DriveError?
     private let trashReconciliationItem: DriveItem?
     private let waitsForTrashReconciliationCompletion: Bool
+    private let waitsForSecondListChildrenCompletion: Bool
     private var renamedItems: [String: DriveItem] = [:]
     private var treeResponses: [TreeResponse]
     private var downloadContinuation: CheckedContinuation<DriveFileDownload, Never>?
@@ -734,6 +750,7 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     private var creationContinuation: CheckedContinuation<Void, Never>?
     private var trashContinuation: CheckedContinuation<Void, Never>?
     private var trashReconciliationContinuation: CheckedContinuation<Void, Never>?
+    private var secondListChildrenContinuation: CheckedContinuation<Void, Never>?
     private var didStartDownload = false
     private var didStartUpdate = false
     private var didStartRename = false
@@ -741,6 +758,7 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     private var didStartTrash = false
     private var didReturnUnknownTrashStatus = false
     private var didStartTrashReconciliation = false
+    private var didStartSecondListChildren = false
     private(set) var updateRequestCount = 0
     private(set) var renameRequestCount = 0
     private(set) var trashRequestCount = 0
@@ -757,7 +775,8 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         waitsForTrashCompletion: Bool = false,
         trashError: DriveError? = nil,
         trashReconciliationItem: DriveItem? = nil,
-        waitsForTrashReconciliationCompletion: Bool = false
+        waitsForTrashReconciliationCompletion: Bool = false,
+        waitsForSecondListChildrenCompletion: Bool = false
     ) {
         self.treeResponses = treeResponses
         self.controlledDownload = controlledDownload
@@ -770,6 +789,7 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         self.trashError = trashError
         self.trashReconciliationItem = trashReconciliationItem
         self.waitsForTrashReconciliationCompletion = waitsForTrashReconciliationCompletion
+        self.waitsForSecondListChildrenCompletion = waitsForSecondListChildrenCompletion
     }
 
     func getItem(id: String) async throws -> DriveItem {
@@ -793,6 +813,14 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
 
     func listChildren(of folderID: String) async throws -> [DriveItem] {
         listChildrenRequestCount += 1
+        if waitsForSecondListChildrenCompletion,
+            listChildrenRequestCount == 2
+        {
+            didStartSecondListChildren = true
+            await withCheckedContinuation { continuation in
+                secondListChildrenContinuation = continuation
+            }
+        }
         guard folderID == "vault", !treeResponses.isEmpty else {
             return []
         }
@@ -1006,6 +1034,21 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     func completeTrashReconciliation() {
         trashReconciliationContinuation?.resume()
         trashReconciliationContinuation = nil
+    }
+
+    func waitUntilSecondListChildrenStarts() async throws {
+        for _ in 0..<500 {
+            if didStartSecondListChildren {
+                return
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        throw AppModelTestSynchronizationError.timedOut
+    }
+
+    func completeSecondListChildren() {
+        secondListChildrenContinuation?.resume()
+        secondListChildrenContinuation = nil
     }
 }
 
