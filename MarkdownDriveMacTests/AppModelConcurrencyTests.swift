@@ -531,6 +531,31 @@ final class AppModelConcurrencyTests: XCTestCase {
         XCTAssertEqual(appModel.documentState, .idle)
     }
 
+    func testVaultCannotChangeWhileTrashIsInFlight() async throws {
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [
+                TreeResponse(items: [file(id: "note", name: "note.md")]),
+                TreeResponse(items: []),
+            ],
+            waitsForTrashCompletion: true
+        )
+        let appModel = makeAppModel(driveClient: driveClient)
+        await appModel.restoreSession()
+        appModel.presentTrash(itemID: "note")
+
+        let trash = Task { @MainActor in
+            await appModel.confirmTrash(itemID: "note")
+        }
+        try await driveClient.waitUntilTrashStarts()
+
+        XCTAssertFalse(appModel.canChangeVault)
+        await appModel.presentVaultBrowser()
+        XCTAssertFalse(appModel.isVaultBrowserPresented)
+
+        await driveClient.completeTrash()
+        await trash.value
+    }
+
     func testAffectedDocumentLoadCannotCompleteAfterTrashSucceeds() async throws {
         let driveClient = ControlledAppDriveClient(
             treeResponses: [
@@ -605,6 +630,23 @@ final class AppModelConcurrencyTests: XCTestCase {
             return XCTFail("Expected reconciliation to refresh the Vault tree")
         }
         XCTAssertNil(tree.item(id: "note"))
+    }
+
+    func testUnknownTrashStatusPreventsChangingVault() async {
+        let note = file(id: "note", name: "note.md")
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [TreeResponse(items: [note])],
+            trashError: .writeStatusUnknown
+        )
+        let appModel = makeAppModel(driveClient: driveClient)
+        await appModel.restoreSession()
+        appModel.presentTrash(itemID: "note")
+
+        await appModel.confirmTrash(itemID: "note")
+
+        XCTAssertFalse(appModel.canChangeVault)
+        await appModel.presentVaultBrowser()
+        XCTAssertFalse(appModel.isVaultBrowserPresented)
     }
 
     private func makeAppModel(

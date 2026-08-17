@@ -193,8 +193,10 @@ private struct VaultPlaceholderView: View {
                         await appModel.presentVaultBrowser()
                     }
                 }
-                .disabled(appModel.hasDirtyDocument)
-                .help("Save or discard the current edits before changing Vaults.")
+                .disabled(!appModel.canChangeVault)
+                .help(
+                    "Save or discard edits and resolve pending Trash operations before changing Vaults."
+                )
                 .accessibilityLabel("Choose Google Drive Vault folder")
             }
             ToolbarItem(placement: .primaryAction) {

@@ -106,6 +106,7 @@ final class AppModel: ObservableObject {
     private var vaultItemTrashID: UUID?
     private var trashTargetItemID: String?
     private var trashAffectedItemIDs: Set<String> = []
+    private var trashVaultTree: VaultTree?
 
     init(
         authenticationController: AuthenticationController,
@@ -176,7 +177,7 @@ final class AppModel: ObservableObject {
     }
 
     func presentVaultBrowser() async {
-        guard !hasDirtyDocument else {
+        guard canChangeVault else {
             return
         }
         isVaultBrowserPresented = true
@@ -208,7 +209,7 @@ final class AppModel: ObservableObject {
     }
 
     func selectCurrentFolderAsVault() async {
-        guard !hasDirtyDocument else {
+        guard canChangeVault else {
             return
         }
         let generation = authenticationGeneration
@@ -338,6 +339,10 @@ final class AppModel: ObservableObject {
             return false
         }
         return true
+    }
+
+    var canChangeVault: Bool {
+        !hasDirtyDocument && !isTrashStatusLocked
     }
 
     var availableVaultFolders: [VaultFolderDestination] {
@@ -528,6 +533,7 @@ final class AppModel: ObservableObject {
             vaultItemRenameState != .renaming,
             vaultItemTrashState == .idle,
             trashTargetItemID == nil || trashTargetItemID == id,
+            !isVaultBrowserPresented,
             documentSaveState != .saving
         else {
             return false
@@ -587,6 +593,7 @@ final class AppModel: ObservableObject {
         let generation = authenticationGeneration
         vaultItemTrashID = trashID
         trashAffectedItemIDs = affectedIDs
+        trashVaultTree = tree
         isTrashConfirmationPresented = false
         vaultItemTrashState = .trashing
 
@@ -602,9 +609,13 @@ final class AppModel: ObservableObject {
                 return
             }
             if let softTrashFolderID = result.softTrashFolderID {
-                await persistSoftTrashFolderID(softTrashFolderID)
+                await persistSoftTrashFolderID(
+                    softTrashFolderID,
+                    vaultRootFolderID: tree.root.item.id
+                )
                 guard vaultItemTrashID == trashID,
-                    authenticationGeneration == generation
+                    authenticationGeneration == generation,
+                    selectedVault?.rootFolderID == tree.root.item.id
                 else {
                     return
                 }
@@ -640,7 +651,7 @@ final class AppModel: ObservableObject {
         let generation = authenticationGeneration
         vaultItemTrashState = .reconciling
         do {
-            guard case .loaded(let tree) = vaultTreeState else {
+            guard let tree = trashVaultTree else {
                 throw DriveError.writeStatusUnknown
             }
             let result = try await vaultItemTrasher.reconcile(
@@ -656,9 +667,13 @@ final class AppModel: ObservableObject {
             case .trashed:
                 await finishConfirmedTrash(affectedIDs: trashAffectedItemIDs)
             case .vaultSoftTrashed(let folderID):
-                await persistSoftTrashFolderID(folderID)
+                await persistSoftTrashFolderID(
+                    folderID,
+                    vaultRootFolderID: tree.root.item.id
+                )
                 guard self.vaultItemTrashID == vaultItemTrashID,
-                    authenticationGeneration == generation
+                    authenticationGeneration == generation,
+                    selectedVault?.rootFolderID == tree.root.item.id
                 else {
                     return
                 }
@@ -1227,8 +1242,12 @@ final class AppModel: ObservableObject {
         await loadVaultTree()
     }
 
-    private func persistSoftTrashFolderID(_ folderID: String) async {
+    private func persistSoftTrashFolderID(
+        _ folderID: String,
+        vaultRootFolderID: String
+    ) async {
         guard var vault = selectedVault,
+            vault.rootFolderID == vaultRootFolderID,
             vault.softTrashFolderID != folderID
         else {
             return
@@ -1331,6 +1350,7 @@ final class AppModel: ObservableObject {
         vaultItemTrashID = nil
         trashTargetItemID = nil
         trashAffectedItemIDs = []
+        trashVaultTree = nil
         isTrashConfirmationPresented = false
         isTrashErrorAlertPresented = false
         vaultItemTrashState = .idle

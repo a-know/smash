@@ -233,6 +233,8 @@ final class VaultItemTrasherTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? DriveError, .writeStatusUnknown)
         }
+        let moveRequests = await client.moveRequests
+        XCTAssertEqual(moveRequests, ["note:vault:soft-trash"])
     }
 
     func testPostMoveAuthenticationFailureHasUnknownStatus() async {
@@ -260,6 +262,8 @@ final class VaultItemTrasherTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? DriveError, .writeStatusUnknown)
         }
+        let moveRequests = await client.moveRequests
+        XCTAssertEqual(moveRequests, ["note:vault:soft-trash"])
     }
 
     func testControlFolderMovedAfterItemMoveHasUnknownStatus() async {
@@ -287,6 +291,8 @@ final class VaultItemTrasherTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? DriveError, .writeStatusUnknown)
         }
+        let moveRequests = await client.moveRequests
+        XCTAssertEqual(moveRequests, ["note:vault:soft-trash"])
     }
 
     func testReconciliationRejectsMarkedFolderOutsideSelectedVault() async throws {
@@ -443,6 +449,7 @@ private actor FakeSoftTrashClient: DriveSoftTrashClient {
     private let verificationErrorAfterMove: DriveError?
     private let movesControlFolderOutsideAfterMove: Bool
     private(set) var operations: [String] = []
+    private(set) var moveRequests: [String] = []
 
     init(
         items: [String: DriveItem],
@@ -519,6 +526,7 @@ private actor FakeSoftTrashClient: DriveSoftTrashClient {
         fromParentID: String,
         toParentID: String
     ) async throws -> DriveItem {
+        moveRequests.append("\(id):\(fromParentID):\(toParentID)")
         guard let item = items[id], item.parentIDs == [fromParentID] else {
             throw DriveError.itemChangedRemotely
         }
