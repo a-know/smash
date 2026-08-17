@@ -61,7 +61,7 @@ extension DriveError: LocalizedError {
         case .renameNotAllowed:
             "Google Drive does not allow this item to be renamed."
         case .trashNotAllowed:
-            "Google Drive does not allow this item to be moved to Trash."
+            "Google Drive does not allow this item to be moved to Trash or the Vault’s app Trash folder."
         case .networkFailure:
             "Google Drive could not be reached."
         case .permissionDenied:

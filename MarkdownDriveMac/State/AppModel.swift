@@ -522,7 +522,8 @@ final class AppModel: ObservableObject {
             case .loaded(let tree) = vaultTreeState,
             id != tree.root.item.id,
             let item = tree.item(id: id),
-            item.capabilities?.canTrash == true,
+            item.capabilities?.canTrash == true
+                || item.capabilities?.canMoveItemWithinDrive == true,
             vaultItemCreationState != .creating,
             vaultItemRenameState != .renaming,
             vaultItemTrashState == .idle,
@@ -590,11 +591,18 @@ final class AppModel: ObservableObject {
         vaultItemTrashState = .trashing
 
         do {
-            _ = try await vaultItemTrasher.trash(itemID: itemID, in: tree)
+            let result = try await vaultItemTrasher.trash(
+                itemID: itemID,
+                in: tree,
+                softTrashFolderID: selectedVault?.softTrashFolderID
+            )
             guard vaultItemTrashID == trashID,
                 authenticationGeneration == generation
             else {
                 return
+            }
+            if let softTrashFolderID = result.softTrashFolderID {
+                await persistSoftTrashFolderID(softTrashFolderID)
             }
             await finishConfirmedTrash(affectedIDs: affectedIDs)
         } catch {
@@ -635,6 +643,9 @@ final class AppModel: ObservableObject {
             }
             switch result {
             case .trashed:
+                await finishConfirmedTrash(affectedIDs: trashAffectedItemIDs)
+            case .vaultSoftTrashed(let folderID):
+                await persistSoftTrashFolderID(folderID)
                 await finishConfirmedTrash(affectedIDs: trashAffectedItemIDs)
             case .notTrashed:
                 resetTrashState()
@@ -1198,6 +1209,21 @@ final class AppModel: ObservableObject {
         }
         resetTrashState()
         await loadVaultTree()
+    }
+
+    private func persistSoftTrashFolderID(_ folderID: String) async {
+        guard var vault = selectedVault,
+            vault.softTrashFolderID != folderID
+        else {
+            return
+        }
+        vault.softTrashFolderID = folderID
+        selectedVault = vault
+        do {
+            try await vaultStore.saveVault(vault)
+        } catch {
+            vaultPersistenceError = "The app Trash folder selection could not be saved."
+        }
     }
 
     private func handleItemCreationError(

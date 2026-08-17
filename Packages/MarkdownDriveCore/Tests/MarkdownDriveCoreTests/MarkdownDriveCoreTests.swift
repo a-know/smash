@@ -28,4 +28,14 @@ final class MarkdownDriveCoreTests: XCTestCase {
         XCTAssertEqual(item.parentIDs, ["vault-root-id"])
         XCTAssertFalse(item.isTrashed)
     }
+
+    func testVaultDecodesSettingsSavedBeforeSoftTrashFolderWasIntroduced() throws {
+        let data = Data(#"{"rootFolderID":"vault","displayName":"Notes"}"#.utf8)
+
+        let vault = try JSONDecoder().decode(Vault.self, from: data)
+
+        XCTAssertEqual(vault.rootFolderID, "vault")
+        XCTAssertEqual(vault.displayName, "Notes")
+        XCTAssertNil(vault.softTrashFolderID)
+    }
 }

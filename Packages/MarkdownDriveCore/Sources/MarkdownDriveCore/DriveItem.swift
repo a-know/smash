@@ -6,10 +6,16 @@ public enum DriveItemKind: String, Codable, Hashable, Sendable {
 public struct DriveItemCapabilities: Codable, Hashable, Sendable {
     public let canRename: Bool?
     public let canTrash: Bool?
+    public let canMoveItemWithinDrive: Bool?
 
-    public init(canRename: Bool? = nil, canTrash: Bool? = nil) {
+    public init(
+        canRename: Bool? = nil,
+        canTrash: Bool? = nil,
+        canMoveItemWithinDrive: Bool? = nil
+    ) {
         self.canRename = canRename
         self.canTrash = canTrash
+        self.canMoveItemWithinDrive = canMoveItemWithinDrive
     }
 }
 
@@ -21,6 +27,7 @@ public struct DriveItem: Identifiable, Codable, Hashable, Sendable {
     public let parentIDs: [String]
     public var isTrashed: Bool
     public let capabilities: DriveItemCapabilities?
+    public let appProperties: [String: String]?
 
     public init(
         id: String,
@@ -29,7 +36,8 @@ public struct DriveItem: Identifiable, Codable, Hashable, Sendable {
         mimeType: String? = nil,
         parentIDs: [String] = [],
         isTrashed: Bool = false,
-        capabilities: DriveItemCapabilities? = nil
+        capabilities: DriveItemCapabilities? = nil,
+        appProperties: [String: String]? = nil
     ) {
         self.id = id
         self.name = name
@@ -38,5 +46,6 @@ public struct DriveItem: Identifiable, Codable, Hashable, Sendable {
         self.parentIDs = parentIDs
         self.isTrashed = isTrashed
         self.capabilities = capabilities
+        self.appProperties = appProperties
     }
 }

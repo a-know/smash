@@ -91,6 +91,16 @@ ambiguous outcome, mutations affecting the item remain locked until a metadata r
 the item is trashed. A confirmed Trash closes affected documents and cancels their pending loads; a
 confirmed non-Trash result unlocks the item after refreshing the Vault tree.
 
+When `capabilities.canTrash` is unavailable but `canMoveItemWithinDrive` is explicitly granted, the
+same user action uses the Vault-local fallback. The app locates or creates `_SMASH_TRASH` directly
+under the Vault root, identifies it by a private `appProperties` marker plus its locally persisted
+Drive ID, and excludes that marked subtree from normal enumeration regardless of its current name.
+Before moving an item, the app writes and re-reads its previous parent ID, deletion timestamp, and
+soft-deleted marker. It then changes the parent with `addParents` and `removeParents` and verifies the
+result with another metadata read. An ambiguous metadata or move write is not retried; reconciliation
+recognizes either Drive Trash or a marked app Trash parent. Moving an item out of the control folder
+therefore makes it visible again on the next refresh without changing its content.
+
 An OAuth token permits broader Drive access than the Vault. Possession of that token or an arbitrary
 file ID is never treated as proof of Vault membership.
 

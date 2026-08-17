@@ -530,6 +530,79 @@ final class GoogleDriveAPIClientTests: XCTestCase {
         XCTAssertEqual(metadata, ["trashed": true])
     }
 
+    func testUpdatesPrivateAppPropertiesWithoutRetryingTheWrite() async throws {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(
+                statusCode: 200,
+                body: """
+                    {
+                      "id": "file-1",
+                      "name": "Idea.md",
+                      "mimeType": "text/markdown",
+                      "parents": ["vault"],
+                      "trashed": false,
+                      "appProperties": {"smashSoftDeleted": "true"}
+                    }
+                    """
+            )
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        let item = try await client.updateAppProperties(
+            id: "file-1",
+            appProperties: ["smashSoftDeleted": "true"]
+        )
+
+        XCTAssertEqual(item.appProperties, ["smashSoftDeleted": "true"])
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests[0].httpMethod, "PATCH")
+        let body = try XCTUnwrap(requests[0].httpBody)
+        let metadata = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: body) as? [String: [String: String]]
+        )
+        XCTAssertEqual(metadata, ["appProperties": ["smashSoftDeleted": "true"]])
+    }
+
+    func testMovesItemByAddingAndRemovingParents() async throws {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(
+                statusCode: 200,
+                body: """
+                    {
+                      "id": "file-1",
+                      "name": "Idea.md",
+                      "mimeType": "text/markdown",
+                      "parents": ["soft-trash"],
+                      "trashed": false
+                    }
+                    """
+            )
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        let item = try await client.moveItem(
+            id: "file-1",
+            fromParentID: "notes",
+            toParentID: "soft-trash"
+        )
+
+        XCTAssertEqual(item.parentIDs, ["soft-trash"])
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests[0].httpMethod, "PATCH")
+        XCTAssertEqual(queryValue(named: "addParents", in: requests[0]), "soft-trash")
+        XCTAssertEqual(queryValue(named: "removeParents", in: requests[0]), "notes")
+        XCTAssertEqual(queryValue(named: "supportsAllDrives", in: requests[0]), "true")
+        XCTAssertEqual(requests[0].httpBody, Data("{}".utf8))
+    }
+
     func testRenamesItemWithMetadataPatchAndSharedDriveSupport() async throws {
         let transport = FakeDriveHTTPTransport(responses: [
             .success(
