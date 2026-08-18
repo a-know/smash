@@ -12,11 +12,13 @@ struct ContentView: View {
             case .restoring:
                 ProgressView("Restoring your Google session…")
                     .frame(minWidth: 520, minHeight: 360)
+                    .accessibilityStatusFocus(id: "restoring-session")
             case .signingIn:
                 VStack(spacing: 12) {
                     ProgressView()
                     Text("Complete authorization in your browser.")
                         .foregroundStyle(.secondary)
+                        .accessibilityStatusFocus(id: "browser-authorization")
                 }
                 .frame(minWidth: 520, minHeight: 360)
             case .signedIn:
@@ -59,6 +61,7 @@ private struct AuthenticationView: View {
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 460)
                     .accessibilityLabel("Authentication error: \(error.localizedDescription)")
+                    .accessibilityStatusFocus(id: error.localizedDescription)
             }
 
             Button("Sign in with Google") {
@@ -94,6 +97,7 @@ private struct VaultPlaceholderView: View {
                     } description: {
                         if let error = appModel.vaultPersistenceError {
                             Text(error)
+                                .accessibilityStatusFocus(id: error)
                         } else {
                             Text(
                                 "Choose a Google Drive folder to discover its \(MarkdownFileRules.requiredExtension) files."
@@ -438,13 +442,18 @@ private struct RenameItemView: View {
         switch appModel.vaultItemRenameState {
         case .renaming:
             ProgressView("Renaming in Google Drive…")
+                .accessibilityStatusFocus(id: "renaming")
         case .failed(let message):
             Label(message, systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(.red)
+                .accessibilityLabel("Rename failed: \(message)")
+                .accessibilityStatusFocus(id: message)
         case .statusUnknown(let message):
             VStack(alignment: .leading, spacing: 4) {
                 Label(message, systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
+                    .accessibilityLabel("Rename status unknown: \(message)")
+                    .accessibilityStatusFocus(id: message)
                 Text("Close this dialog and refresh the Vault before trying again.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -521,13 +530,18 @@ private struct NewNoteView: View {
         switch appModel.vaultItemCreationState {
         case .creating:
             ProgressView("Creating in Google Drive…")
+                .accessibilityStatusFocus(id: "creating-note")
         case .failed(let message):
             Label(message, systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(.red)
+                .accessibilityLabel("Note creation failed: \(message)")
+                .accessibilityStatusFocus(id: message)
         case .statusUnknown(let message):
             VStack(alignment: .leading, spacing: 4) {
                 Label(message, systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
+                    .accessibilityLabel("Note creation status unknown: \(message)")
+                    .accessibilityStatusFocus(id: message)
                 Text("Close this dialog and refresh the Vault before trying again.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -604,13 +618,18 @@ private struct NewFolderView: View {
         switch appModel.vaultItemCreationState {
         case .creating:
             ProgressView("Creating in Google Drive…")
+                .accessibilityStatusFocus(id: "creating-folder")
         case .failed(let message):
             Label(message, systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(.red)
+                .accessibilityLabel("Folder creation failed: \(message)")
+                .accessibilityStatusFocus(id: message)
         case .statusUnknown(let message):
             VStack(alignment: .leading, spacing: 4) {
                 Label(message, systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
+                    .accessibilityLabel("Folder creation status unknown: \(message)")
+                    .accessibilityStatusFocus(id: message)
                 Text("Close this dialog and refresh the Vault before trying again.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -707,9 +726,12 @@ private struct VaultSidebar: View {
             case .idle, .loading:
                 ProgressView("Loading \(vault.displayName)…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityStatusFocus(id: "loading-vault")
             case .failed(let message):
                 ContentUnavailableView {
                     Label("Could Not Load Vault", systemImage: "exclamationmark.triangle")
+                        .accessibilityLabel("Could not load Vault: \(message)")
+                        .accessibilityStatusFocus(id: message)
                 } description: {
                     Text(message)
                 } actions: {
@@ -723,6 +745,10 @@ private struct VaultSidebar: View {
                 if tree.root.children.isEmpty {
                     ContentUnavailableView {
                         Label("Vault Is Empty", systemImage: "folder")
+                            .accessibilityLabel(
+                                "Vault is empty. No Markdown files or subfolders were found."
+                            )
+                            .accessibilityStatusFocus(id: "empty-vault")
                     } description: {
                         Text("No Markdown files or subfolders were found in this Vault.")
                     } actions: {
@@ -845,9 +871,12 @@ private struct MarkdownEditorDetail: View {
             case .loading:
                 ProgressView("Opening Markdown file…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityStatusFocus(id: "opening-document")
             case .failed(_, let message):
                 ContentUnavailableView {
                     Label("Could Not Open Document", systemImage: "exclamationmark.triangle")
+                        .accessibilityLabel("Could not open document: \(message)")
+                        .accessibilityStatusFocus(id: message)
                 } description: {
                     Text(message)
                 } actions: {
@@ -994,9 +1023,12 @@ private struct VaultFolderBrowserView: View {
         case .idle, .loading:
             ProgressView("Loading Google Drive folders…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityStatusFocus(id: "loading-drive-folders")
         case .failed(let message):
             ContentUnavailableView {
                 Label("Could Not Load Folders", systemImage: "exclamationmark.triangle")
+                    .accessibilityLabel("Could not load folders: \(message)")
+                    .accessibilityStatusFocus(id: message)
             } description: {
                 Text(message)
             } actions: {
@@ -1013,6 +1045,10 @@ private struct VaultFolderBrowserView: View {
                     systemImage: "folder",
                     description: Text("You can use the current folder as the Vault.")
                 )
+                .accessibilityLabel(
+                    "No subfolders. You can use the current folder as the Vault."
+                )
+                .accessibilityStatusFocus(id: "no-subfolders")
             } else {
                 List(snapshot.childFolders, id: \.id) { folder in
                     Button {
@@ -1070,4 +1106,28 @@ private struct VaultFolderBrowserView: View {
 
 #Preview("Signed Out") {
     ContentView(appModel: AppDependencies.makeAppModel())
+}
+
+private struct AccessibilityStatusFocusModifier<ID: Equatable>: ViewModifier {
+    let id: ID
+
+    @AccessibilityFocusState private var isFocused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .accessibilityFocused($isFocused)
+            .task(id: id) {
+                await Task.yield()
+                guard !Task.isCancelled else {
+                    return
+                }
+                isFocused = true
+            }
+    }
+}
+
+extension View {
+    fileprivate func accessibilityStatusFocus<ID: Equatable>(id: ID) -> some View {
+        modifier(AccessibilityStatusFocusModifier(id: id))
+    }
 }
