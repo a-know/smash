@@ -40,17 +40,20 @@ Do not sacrifice items 1–5 to add post-MVP features.
 
 ## MVP boundary
 
-Implement only the macOS MVP defined in `SPEC.md` unless explicitly asked otherwise.
+Implement only the expanded macOS MVP defined in `SPEC.md` unless explicitly asked otherwise.
 
 Future iOS/iPadOS support is an **architectural constraint**, not an MVP deliverable.
 
-In particular, do not spontaneously add:
+The expanded MVP explicitly includes automatic remote refresh, Drive Changes API, a disposable
+read/index cache, tabs, split editing, conflict-safe Autosave, syntax highlighting, Markdown
+preview, Quick Open, Wiki Links, Backlinks, YAML front matter/tags, Vault-stored templates, and
+Vault-relative images/attachments. Implement them only in the dependency order below.
 
-- Obsidian compatibility;
-- backlinks;
+Do not spontaneously add features that remain outside the expanded MVP, including:
+
+- Obsidian plugin compatibility;
 - graph view;
-- tags;
-- Markdown preview;
+- full-text body search;
 - WYSIWYG editing;
 - Mermaid;
 - math rendering;
@@ -61,7 +64,7 @@ In particular, do not spontaneously add:
 - realtime collaboration;
 - telemetry frameworks.
 
-A smaller reliable application is preferred.
+A staged, reliable application is preferred. Breadth never relaxes data-safety requirements.
 
 ---
 
@@ -153,14 +156,16 @@ When designing Markdown-visible data:
 - do not introduce proprietary metadata when a common Markdown/Obsidian convention is sufficient;
 - do not modify Obsidian configuration files unless explicitly implementing a documented interoperability feature.
 
-Future Wiki Link support should consider conventional `[[note]]` syntax.
+Wiki Link support uses conventional `[[note]]` syntax and must keep its resolution rules portable
+and documented.
 
-Do not spend MVP time implementing Obsidian-specific UI, plugins, graph view, backlinks, or configuration parsing. Compatibility must not expand the MVP scope.
+Do not use Wiki Links or Backlinks as justification to implement Obsidian-specific plugins, graph
+view, or configuration parsing. Compatibility must not expand beyond the documented MVP scope.
 
 
 ## Tagging rules
 
-Tagging is post-MVP, but preserve a portable design.
+Tagging and YAML front matter are expanded-MVP features and must preserve a portable design.
 
 Canonical principle:
 
@@ -181,7 +186,8 @@ When tag support is implemented:
 
 ## Attachment and image rules
 
-Image/attachment support is post-MVP, but the architecture must not make it difficult later.
+Image/attachment support is an expanded-MVP feature, implemented only after source preview and
+multi-document safety are stable.
 
 Canonical design:
 
@@ -194,9 +200,7 @@ Canonical design:
 
 Prefer a shared abstraction such as `VaultPathResolver` in `MarkdownDriveCore`.
 
-Do not implement image upload/rendering during the text-only MVP unless explicitly asked, but avoid data models that assume every Vault item is Markdown text.
-
-When attachment support is implemented later:
+When attachment support is implemented:
 
 - preserve relative-link portability;
 - prevent path traversal outside the Vault root;
@@ -204,6 +208,41 @@ When attachment support is implemented later:
 - preserve unsaved Markdown text if upload fails;
 - do not insert a Markdown link until upload succeeds;
 - treat binary caching as disposable, not authoritative.
+
+## Remote refresh and cache rules
+
+- use Drive Changes API only after an authoritative initial Vault load;
+- persist change cursors separately per account/Vault identity;
+- validate every changed item against the current Vault boundary;
+- fall back to a full reload when a cursor or delta cannot be reconciled safely;
+- never replace a dirty buffer because of a remote refresh;
+- local contents and indexes are disposable, versioned, and rebuildable from Drive;
+- never let cached data become authority for a write.
+
+If network connectivity or a valid authenticated Drive session is unavailable, the application is
+read-only. Disable editors and every mutating action. Do not support offline edits, queued writes,
+or later synchronization in the expanded MVP.
+
+## Multi-document and Autosave rules
+
+- keep buffer, remote revision, dirty state, save state, and conflict state per open document;
+- never use one global document state once tabs are introduced;
+- serialize/coalesce saves per Drive file, not globally;
+- Autosave uses the same conflict and Vault-boundary checks as `⌘S`;
+- pause Autosave for conflicts, authentication loss, offline state, and uncertain writes;
+- closing tabs, signing out, changing Vaults, and quitting must account for every dirty buffer;
+- one tab or split pane failing must not discard another document's state.
+
+## Wiki Link, Backlink, and template rules
+
+- Wiki Links use conventional Markdown-visible `[[note]]` syntax;
+- ambiguous and unresolved links must be reported rather than guessed;
+- Backlinks and link indexes are derived and rebuildable;
+- remote rename/move/delete must invalidate affected derived results;
+- do not rewrite an entire Vault's links automatically without a separately approved safe design;
+- templates are ordinary Markdown files inside a user-selected Vault folder;
+- creating from a template never modifies the template and uses normal safe-create semantics;
+- template variables must be deterministic, documented, and must not execute arbitrary code.
 
 ## Data-safety rules
 
@@ -250,7 +289,8 @@ Requirements:
 - unsaved-change state;
 - `⌘S` save.
 
-Prefer a simple, robust native editor before adding syntax highlighting.
+Establish and retain a simple, robust native source editor before layering syntax highlighting and
+preview on top of it. Highlighting must not mutate source text or composition state.
 
 When modifying editor internals, manually test Japanese composition text before considering the change complete.
 
@@ -346,6 +386,92 @@ Do not proceed to convenience features until safe save works.
 - manual acceptance checklist from SPEC.md;
 - README setup instructions.
 
+Milestone 6 closes the original safe text-editor baseline. Do not start the expanded feature set
+until it is merged and stable.
+
+### Milestone 7 — Remote changes and disposable cache
+
+- integrate Drive Changes API after a full authoritative Vault load;
+- persist and recover change cursors per account/Vault;
+- reconcile remote create/update/rename/move/delete events inside the Vault boundary;
+- add automatic foreground refresh without replacing dirty buffers;
+- add a disposable recent-document read cache;
+- add rebuildable indexes needed by later Quick Open, links, and tags;
+- make the application read-only whenever Drive connectivity/authentication is unavailable;
+- explicitly do not queue offline edits or writes.
+
+### Milestone 8 — Multi-document workspace
+
+- replace single-document app state with per-document sessions;
+- add tabs;
+- add two-pane split editing;
+- retain independent dirty/save/conflict state per document;
+- safely close one or all dirty tabs;
+- update sign-out, Vault change, and app termination for multiple dirty buffers.
+
+### Milestone 9 — Conflict-safe Autosave
+
+- debounce edits;
+- serialize/coalesce saves per Drive file;
+- reuse manual-save conflict and boundary checks;
+- pause on offline/auth/conflict/unknown status;
+- keep explicit `⌘S` and visible per-document state;
+- test remote edits racing with queued and in-flight Autosave.
+
+### Milestone 10 — Syntax highlighting and preview
+
+- add IME-safe Markdown syntax highlighting;
+- add source, preview, and source/preview split modes;
+- preserve exact source, undo/redo, selection, and scrolling;
+- sanitize unsafe rendered HTML/active content;
+- establish preview hooks for later Vault-relative attachments.
+
+### Milestone 11 — Quick Open and links
+
+- add `⌘P` fuzzy filename/path Quick Open with recent files;
+- parse conventional Wiki Links in shared core;
+- define duplicate-name, alias, unresolved, and ambiguous-link behavior;
+- open resolved links in the multi-document workspace;
+- build and display Backlinks from a rebuildable local index;
+- invalidate link results after remote rename/move/delete.
+
+### Milestone 12 — YAML front matter and tags
+
+- parse malformed and valid front matter without losing source text;
+- preserve unknown front-matter data where practical;
+- make YAML tags canonical;
+- define tag normalization, case, and duplicate rules;
+- add tag browsing/filtering;
+- rebuild tag indexes from Drive contents;
+- keep Drive metadata optional and derived.
+
+### Milestone 13 — Vault templates
+
+- select a template folder inside the Vault;
+- manage templates as ordinary Markdown files;
+- create notes from templates without modifying the source template;
+- add a small deterministic variable set for title/date/time;
+- apply normal naming, destination, conflict, and ambiguous-create safety.
+
+### Milestone 14 — Images and attachments
+
+- implement shared, traversal-safe `VaultPathResolver` behavior;
+- display existing private Vault-relative images in preview;
+- upload pasted, dropped, or picked files with collision-safe names;
+- insert relative Markdown only after upload succeeds;
+- preserve unsaved Markdown on every attachment failure;
+- keep binary caching disposable and authenticated.
+
+### Milestone 15 — Expanded MVP hardening and acceptance
+
+- exercise combined remote refresh, tabs, splits, Autosave, links, tags, templates, and attachments;
+- verify offline state disables all editing/mutation and queues nothing;
+- verify relaunch/cache/index rebuild behavior;
+- test at least 1,000 Markdown files, deep nesting, and 1 MB documents;
+- complete the expanded manual acceptance checklist;
+- update README and architecture documentation;
+- perform accessibility and Japanese IME regression checks across the expanded UI.
+
 ---
 
 ## Future platform constraints
@@ -394,6 +520,17 @@ Minimum important tests:
 - save failure retaining local text;
 - rename behavior;
 - trash behavior.
+- Drive change cursor persistence, invalidation, and full-reload fallback;
+- remote changes never replacing dirty buffers;
+- cache/index rebuilding and stale-version rejection;
+- offline state disabling every editor and mutating action;
+- independent tab/split document state;
+- Autosave debounce, coalescing, conflict, and uncertain-write behavior;
+- IME-safe syntax highlighting;
+- Wiki Link ambiguity and Backlink invalidation;
+- lossless front-matter/tag handling;
+- template expansion and safe creation;
+- attachment path traversal, upload failure, and filename collision behavior.
 
 Do not make normal test execution depend on live Google Drive credentials.
 
@@ -483,4 +620,9 @@ For each feature consider:
 
 Do not call the macOS MVP complete until this is true:
 
-> A user can launch the app, sign into Google, choose a Drive folder once, automatically see every existing Markdown file below it, edit and save those files directly in Drive, create/rename/trash notes and folders, relaunch into the same Vault, and safely coexist with edits made from another device without silent data loss.
+> A user can launch the app, sign into Google, choose a Drive folder once, automatically see and
+> refresh its Markdown tree, safely work with multiple highlighted source/preview documents, save
+> manually or automatically without silent overwrites, navigate with Quick Open and Wiki
+> Links/Backlinks, organize portable YAML tags and Vault templates, use private Vault-relative
+> images/attachments, relaunch into the same workspace, and become strictly read-only rather than
+> queueing edits whenever Drive is unavailable.
