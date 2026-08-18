@@ -69,6 +69,7 @@ the app enforces the selected Vault boundary independently of the OAuth grant.
 
 The folder choice is restored at the next launch. Normal app operations remain restricted to that
 Vault even though the OAuth scope grants broader Drive access.
+Use **File > Change Vault…** or the toolbar's folder button to select a different Vault.
 
 ## Keyboard commands
 
