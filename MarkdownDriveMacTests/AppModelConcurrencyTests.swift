@@ -6,6 +6,20 @@ import XCTest
 
 @MainActor
 final class AppModelConcurrencyTests: XCTestCase {
+    func testVaultCannotChangeWhileSignedOut() async {
+        let driveClient = ControlledAppDriveClient(treeResponses: [])
+        let appModel = makeAppModel(driveClient: driveClient)
+
+        XCTAssertEqual(appModel.authenticationState, .signedOut)
+        XCTAssertFalse(appModel.canChangeVault)
+
+        await appModel.presentVaultBrowser()
+
+        XCTAssertFalse(appModel.isVaultBrowserPresented)
+        let listChildrenRequestCount = await driveClient.listChildrenRequestCount
+        XCTAssertEqual(listChildrenRequestCount, 0)
+    }
+
     func testOlderVaultRefreshCannotOverwriteNewerTree() async throws {
         let driveClient = ControlledAppDriveClient(
             treeResponses: [
@@ -77,6 +91,7 @@ final class AppModelConcurrencyTests: XCTestCase {
 
         XCTAssertNotNil(appModel.selectedVault)
         XCTAssertFalse(appModel.canRefreshVault)
+        XCTAssertFalse(appModel.canChangeVault)
     }
 
     func testClearingSelectionInvalidatesInFlightDocumentLoad() async throws {

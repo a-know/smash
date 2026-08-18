@@ -361,7 +361,10 @@ final class AppModel: ObservableObject {
     }
 
     var canChangeVault: Bool {
-        !hasDirtyDocument && !isTrashStatusLocked
+        guard case .signedIn = authenticationState else {
+            return false
+        }
+        return !hasDirtyDocument && !isTrashStatusLocked
     }
 
     var availableVaultFolders: [VaultFolderDestination] {
