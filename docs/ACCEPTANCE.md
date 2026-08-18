@@ -18,6 +18,7 @@ MVP can be called complete.
 - [ ] A configured test user can complete browser sign-in and return to the app.
 - [ ] An account not listed as a test user is rejected by Google without changing local files.
 - [ ] A Vault can be selected from My Drive or a nested folder.
+- [ ] **File > Change Vault…** can replace the selected Vault when no unsafe operation is pending.
 - [ ] Relaunch restores the signed-in session and the same Vault without repeated Keychain prompts.
 - [ ] Sign out returns to the authentication screen, and signing in again restores the saved Vault.
 

@@ -36,6 +36,15 @@ struct MarkdownDocumentCommands: Commands {
             }
             .keyboardShortcut("r", modifiers: .command)
             .disabled(!appModel.canRefreshVault)
+
+            Divider()
+
+            Button("Change Vault…") {
+                Task {
+                    await appModel.presentVaultBrowser()
+                }
+            }
+            .disabled(!appModel.canChangeVault)
         }
 
         CommandMenu("Item") {
