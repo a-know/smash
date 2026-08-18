@@ -4,7 +4,7 @@ Markdown Drive is a focused macOS Markdown source editor backed directly by a fo
 Drive. Google Drive remains the source of truth: notes stay as ordinary `.md` files, and Google
 Drive for desktop is not required.
 
-The current MVP targets macOS 15 or later. Its shared `MarkdownDriveCore` Swift package contains
+The expanded MVP targets macOS 15 or later. Its shared `MarkdownDriveCore` Swift package contains
 the platform-neutral Drive, Vault, document, and conflict-safety logic intended for later iPadOS and
 iOS applications.
 
@@ -20,6 +20,25 @@ iOS applications.
 - Move owned items to Google Drive Trash.
 - Recoverably move non-trashable items into the Vault-local `_SMASH_TRASH` control folder when
   Google Drive grants permission to move them; otherwise leave them unchanged and show an error.
+
+## Expanded MVP roadmap
+
+The safe single-document source editor above is the completed baseline. The remaining expanded MVP
+is intentionally staged so that additional features do not weaken Drive correctness or data safety:
+
+1. Remote changes, Drive Changes API, and a disposable read/index cache
+2. Multiple tabs and two-pane split editing
+3. Conflict-safe Autosave
+4. IME-safe syntax highlighting and Markdown preview
+5. Quick Open, Wiki Links, and Backlinks
+6. YAML front matter and portable tags
+7. Vault-stored Markdown templates
+8. Private Vault-relative images and attachments
+9. Combined hardening, performance, accessibility, and Japanese IME acceptance
+
+Offline editing and queued writes are not part of this plan. If Drive connectivity or a valid
+authenticated session is unavailable, cached information may be shown read-only, but editing and
+all mutating actions must be disabled.
 
 ## Prerequisites
 
@@ -108,11 +127,13 @@ CI also enforces Swift formatting. The manual real-account checks are documented
 
 ## Known limitations
 
-- The MVP supports one Vault and one open document at a time.
-- Refresh is manual; there is no realtime or periodic Drive synchronization.
+- The current baseline supports one Vault and one open document at a time; tabs and split editing
+  are planned for the expanded MVP.
+- Refresh is currently manual; automatic Drive change tracking is planned for the expanded MVP.
 - Offline-first editing and a local filesystem mirror are not implemented.
-- Markdown preview, syntax highlighting, attachments, tags, backlinks, and full-text body search
-  are outside the MVP.
+- Markdown preview, syntax highlighting, attachments, tags, Wiki Links, Backlinks, templates, and
+  Autosave are expanded-MVP requirements but are not implemented yet.
+- Full-text body search, Daily Notes, Mermaid, math rendering, and offline editing remain post-MVP.
 - `_SMASH_TRASH` is an application-level recovery folder, not Google Drive Trash. Moving an item out
   of it makes the item active again after refresh.
 - External OAuth apps using the Drive scope require Google verification for public distribution.
