@@ -328,6 +328,25 @@ final class AppModel: ObservableObject {
         }
     }
 
+    var canRefreshVault: Bool {
+        guard case .signedIn = authenticationState,
+            selectedVault != nil
+        else {
+            return false
+        }
+        if case .loading = vaultTreeState {
+            return false
+        }
+        return true
+    }
+
+    func refreshVault() async {
+        guard canRefreshVault else {
+            return
+        }
+        await loadVaultTree()
+    }
+
     var canCreateVaultItems: Bool {
         guard case .signedIn = authenticationState,
             case .loaded = vaultTreeState,
