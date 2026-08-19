@@ -105,6 +105,224 @@ final class AppModelConcurrencyTests: XCTestCase {
         }
     }
 
+    func testIrrelevantDriveChangesAdvanceCursorWithoutReloadingVault() async {
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [TreeResponse(items: [file(id: "note", name: "note.md")])],
+            changeBatchResult: .success(
+                DriveChangeBatch(
+                    changes: [],
+                    newCursor: DriveChangeCursor(rawValue: "next-cursor")
+                )
+            )
+        )
+        let cursorStore = FakeAppDriveChangeCursorStore()
+        let appModel = makeAppModel(
+            driveClient: driveClient,
+            cursorStore: cursorStore
+        )
+        await appModel.restoreSession()
+
+        await appModel.refreshRemoteChanges()
+
+        let listChildrenRequestCount = await driveClient.listChildrenRequestCount
+        XCTAssertEqual(listChildrenRequestCount, 1)
+        let scope = DriveChangeCursorScope(
+            accountID: DriveAccountID(rawValue: "account"),
+            vaultRootFolderID: "vault"
+        )
+        let storedCursor = await cursorStore.cursor(for: scope)
+        XCTAssertEqual(storedCursor, DriveChangeCursor(rawValue: "next-cursor"))
+    }
+
+    func testRelevantDriveChangeReloadsVaultBeforeAdvancingCursor() async {
+        let renamedFile = file(id: "note", name: "renamed.md")
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [
+                TreeResponse(items: [file(id: "note", name: "note.md")]),
+                TreeResponse(items: [renamedFile]),
+            ],
+            changeBatchResult: .success(
+                DriveChangeBatch(
+                    changes: [
+                        .file(id: "note", removed: false, item: renamedFile)
+                    ],
+                    newCursor: DriveChangeCursor(rawValue: "next-cursor")
+                )
+            )
+        )
+        let cursorStore = FakeAppDriveChangeCursorStore()
+        let appModel = makeAppModel(
+            driveClient: driveClient,
+            cursorStore: cursorStore
+        )
+        await appModel.restoreSession()
+
+        await appModel.refreshRemoteChanges()
+
+        guard case .loaded(let tree) = appModel.vaultTreeState else {
+            return XCTFail("Expected the changed Vault tree to load")
+        }
+        XCTAssertEqual(tree.markdownFile(id: "note")?.name, "renamed.md")
+        let scope = DriveChangeCursorScope(
+            accountID: DriveAccountID(rawValue: "account"),
+            vaultRootFolderID: "vault"
+        )
+        let storedCursor = await cursorStore.cursor(for: scope)
+        XCTAssertEqual(storedCursor, DriveChangeCursor(rawValue: "next-cursor"))
+    }
+
+    func testRemoteChangeReloadNeverReplacesDirtyDocumentBuffer() async {
+        let changedFile = file(id: "note", name: "note.md")
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [
+                TreeResponse(items: [changedFile]),
+                TreeResponse(items: [changedFile]),
+            ],
+            controlledDownload: DriveFileDownload(
+                item: changedFile,
+                data: Data("remote text".utf8),
+                revision: revision()
+            ),
+            changeBatchResult: .success(
+                DriveChangeBatch(
+                    changes: [.file(id: "note", removed: false, item: changedFile)],
+                    newCursor: DriveChangeCursor(rawValue: "next-cursor")
+                )
+            )
+        )
+        let appModel = makeAppModel(driveClient: driveClient)
+        await appModel.restoreSession()
+        let documentLoad = Task { @MainActor in
+            await appModel.selectTreeItem(id: "note")
+        }
+        await driveClient.waitUntilDownloadStarts()
+        await driveClient.completeDownload()
+        await documentLoad.value
+        appModel.updateDocumentText("unsaved local text")
+
+        await appModel.refreshRemoteChanges()
+
+        guard case .loaded(let document) = appModel.documentState else {
+            return XCTFail("Expected the dirty document to remain loaded")
+        }
+        XCTAssertEqual(document.text, "unsaved local text")
+        XCTAssertTrue(document.isDirty)
+    }
+
+    func testChangeFeedFailureMakesLoadedContentReadOnlyWithoutDiscardingDirtyText() async {
+        let note = file(id: "note", name: "note.md")
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [TreeResponse(items: [note])],
+            controlledDownload: DriveFileDownload(
+                item: note,
+                data: Data("remote text".utf8),
+                revision: revision()
+            ),
+            changeBatchResult: .failure(.serverUnavailable)
+        )
+        let appModel = makeAppModel(driveClient: driveClient)
+        await appModel.restoreSession()
+        let documentLoad = Task { @MainActor in
+            await appModel.selectTreeItem(id: "note")
+        }
+        await driveClient.waitUntilDownloadStarts()
+        await driveClient.completeDownload()
+        await documentLoad.value
+        appModel.updateDocumentText("unsaved local text")
+
+        await appModel.refreshRemoteChanges()
+
+        guard case .unavailable = appModel.driveChangeTrackingState else {
+            return XCTFail("Expected Drive change tracking to be unavailable")
+        }
+        guard case .loaded(let document) = appModel.documentState else {
+            return XCTFail("Expected the dirty document to remain loaded")
+        }
+        XCTAssertEqual(document.text, "unsaved local text")
+        XCTAssertTrue(document.isDirty)
+        XCTAssertFalse(appModel.isDocumentEditingEnabled)
+        XCTAssertFalse(appModel.canSaveDocument)
+        XCTAssertFalse(appModel.canCreateVaultItems)
+
+        appModel.updateDocumentText("must not be accepted")
+        await appModel.createNewNote(name: "offline", parentFolderID: "vault")
+        await appModel.createNewFolder(name: "offline", parentFolderID: "vault")
+        let creationRequestCount = await driveClient.creationRequestCount
+        XCTAssertEqual(creationRequestCount, 0)
+        guard case .loaded(let unchangedDocument) = appModel.documentState else {
+            return XCTFail("Expected the dirty document to remain loaded")
+        }
+        XCTAssertEqual(unchangedDocument.text, "unsaved local text")
+    }
+
+    func testFailedChangeTriggeredReloadDoesNotAdvanceCursor() async {
+        let changedFile = file(id: "note", name: "changed.md")
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [
+                TreeResponse(items: [file(id: "note", name: "note.md")]),
+                TreeResponse(error: .serverUnavailable),
+            ],
+            changeBatchResult: .success(
+                DriveChangeBatch(
+                    changes: [.file(id: "note", removed: false, item: changedFile)],
+                    newCursor: DriveChangeCursor(rawValue: "next-cursor")
+                )
+            )
+        )
+        let cursorStore = FakeAppDriveChangeCursorStore()
+        let appModel = makeAppModel(
+            driveClient: driveClient,
+            cursorStore: cursorStore
+        )
+        await appModel.restoreSession()
+
+        await appModel.refreshRemoteChanges()
+
+        let scope = DriveChangeCursorScope(
+            accountID: DriveAccountID(rawValue: "account"),
+            vaultRootFolderID: "vault"
+        )
+        let storedCursor = await cursorStore.cursor(for: scope)
+        XCTAssertEqual(storedCursor, DriveChangeCursor(rawValue: "start-cursor"))
+        guard case .failed = appModel.vaultTreeState else {
+            return XCTFail("Expected the authoritative reload to fail")
+        }
+    }
+
+    func testInvalidChangeCursorIsReplacedOnlyWithSuccessfulFullReload() async {
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [
+                TreeResponse(items: [file(id: "note", name: "note.md")]),
+                TreeResponse(items: [file(id: "updated", name: "updated.md")]),
+            ],
+            changeBatchResult: .failure(.invalidResponse)
+        )
+        let cursorStore = FakeAppDriveChangeCursorStore()
+        let appModel = makeAppModel(
+            driveClient: driveClient,
+            cursorStore: cursorStore
+        )
+        await appModel.restoreSession()
+
+        await appModel.refreshRemoteChanges()
+
+        guard case .loaded(let tree) = appModel.vaultTreeState else {
+            return XCTFail("Expected cursor recovery to reload the Vault")
+        }
+        XCTAssertNotNil(tree.markdownFile(id: "updated"))
+        let scope = DriveChangeCursorScope(
+            accountID: DriveAccountID(rawValue: "account"),
+            vaultRootFolderID: "vault"
+        )
+        let storedCursor = await cursorStore.cursor(for: scope)
+        XCTAssertEqual(storedCursor, DriveChangeCursor(rawValue: "start-cursor"))
+        let requestOrder = await driveClient.changeTrackingRequestOrder
+        XCTAssertEqual(
+            requestOrder,
+            ["account", "start", "tree", "account", "start", "tree"]
+        )
+    }
+
     func testOlderVaultRefreshCannotOverwriteNewerTree() async throws {
         let driveClient = ControlledAppDriveClient(
             treeResponses: [
@@ -814,7 +1032,8 @@ final class AppModelConcurrencyTests: XCTestCase {
                 accountClient: driveClient,
                 changeClient: driveClient,
                 cursorStore: cursorStore
-            )
+            ),
+            driveChangeReconciler: DriveChangeReconciler(driveItemClient: driveClient)
         )
     }
 }
@@ -849,6 +1068,7 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     private let waitsForTrashReconciliationCompletion: Bool
     private let waitsForSecondListChildrenCompletion: Bool
     private let accountError: DriveError?
+    private let changeBatchResult: Result<DriveChangeBatch, DriveError>
     private var renamedItems: [String: DriveItem] = [:]
     private var treeResponses: [TreeResponse]
     private var downloadContinuation: CheckedContinuation<DriveFileDownload, Never>?
@@ -867,10 +1087,12 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     private var didStartTrashReconciliation = false
     private var didStartSecondListChildren = false
     private(set) var updateRequestCount = 0
+    private(set) var creationRequestCount = 0
     private(set) var renameRequestCount = 0
     private(set) var trashRequestCount = 0
     private(set) var listChildrenRequestCount = 0
     private(set) var changeTrackingRequestOrder: [String] = []
+    private(set) var listChangesRequestCount = 0
 
     init(
         treeResponses: [TreeResponse],
@@ -885,7 +1107,13 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         trashReconciliationItem: DriveItem? = nil,
         waitsForTrashReconciliationCompletion: Bool = false,
         waitsForSecondListChildrenCompletion: Bool = false,
-        accountError: DriveError? = nil
+        accountError: DriveError? = nil,
+        changeBatchResult: Result<DriveChangeBatch, DriveError> = .success(
+            DriveChangeBatch(
+                changes: [],
+                newCursor: DriveChangeCursor(rawValue: "next-cursor")
+            )
+        )
     ) {
         self.treeResponses = treeResponses
         self.controlledDownload = controlledDownload
@@ -900,6 +1128,7 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         self.waitsForTrashReconciliationCompletion = waitsForTrashReconciliationCompletion
         self.waitsForSecondListChildrenCompletion = waitsForSecondListChildrenCompletion
         self.accountError = accountError
+        self.changeBatchResult = changeBatchResult
     }
 
     func getItem(id: String) async throws -> DriveItem {
@@ -956,7 +1185,8 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     }
 
     func listChanges(since cursor: DriveChangeCursor) async throws -> DriveChangeBatch {
-        DriveChangeBatch(changes: [], newCursor: cursor)
+        listChangesRequestCount += 1
+        return try changeBatchResult.get()
     }
 
     func downloadFile(id: String) async throws -> DriveFileDownload {
@@ -1024,6 +1254,7 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         data: Data,
         mimeType: String
     ) async throws -> DriveFileMetadata {
+        creationRequestCount += 1
         didStartCreation = true
         if waitsForCreationCompletion {
             await withCheckedContinuation { continuation in
@@ -1034,6 +1265,7 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     }
 
     func createFolder(name: String, parentID: String) async throws -> DriveItem {
+        creationRequestCount += 1
         didStartCreation = true
         if waitsForCreationCompletion {
             await withCheckedContinuation { continuation in

@@ -358,7 +358,13 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
                 ),
             ]
         )
-        return try decode(from: await perform(request))
+        do {
+            return try decode(from: await perform(request))
+        } catch DriveError.unexpectedStatus(let statusCode)
+            where statusCode == 400 || statusCode == 410
+        {
+            throw DriveError.changeCursorInvalid
+        }
     }
 
     private func listChildrenPage(
