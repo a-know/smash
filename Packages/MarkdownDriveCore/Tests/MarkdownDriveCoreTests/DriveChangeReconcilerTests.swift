@@ -145,12 +145,53 @@ final class DriveChangeReconcilerTests: XCTestCase {
             against: vaultTree()
         )
         XCTAssertEqual(result, .reloadVaultTree)
+
+        reconciler = DriveChangeReconciler(driveItemClient: ReconciliationDriveClient())
+        result = await reconciler.reconcile(
+            changes: [
+                .file(
+                    id: "missing-parent-note",
+                    removed: false,
+                    item: markdownFile(id: "missing-parent-note", parentIDs: ["missing-parent"])
+                )
+            ],
+            against: vaultTree()
+        )
+        XCTAssertEqual(result, .reloadVaultTree)
+    }
+
+    func testSiblingChangesReuseBoundaryResolutionWithinBatch() async {
+        let driveClient = ReconciliationDriveClient(
+            items: ["outside": folder(id: "outside", parentIDs: [])]
+        )
+        let reconciler = DriveChangeReconciler(driveItemClient: driveClient)
+
+        let result = await reconciler.reconcile(
+            changes: [
+                .file(
+                    id: "first",
+                    removed: false,
+                    item: markdownFile(id: "first", parentIDs: ["outside"])
+                ),
+                .file(
+                    id: "second",
+                    removed: false,
+                    item: markdownFile(id: "second", parentIDs: ["outside"])
+                ),
+            ],
+            against: vaultTree()
+        )
+
+        XCTAssertEqual(result, .noVaultChanges)
+        let outsideRequestCount = await driveClient.requestCount(for: "outside")
+        XCTAssertEqual(outsideRequestCount, 1)
     }
 }
 
 private actor ReconciliationDriveClient: DriveItemClient {
     private let items: [String: DriveItem]
     private let errors: [String: DriveError]
+    private var requestCounts: [String: Int] = [:]
 
     init(
         items: [String: DriveItem] = [:],
@@ -161,6 +202,7 @@ private actor ReconciliationDriveClient: DriveItemClient {
     }
 
     func getItem(id: String) async throws -> DriveItem {
+        requestCounts[id, default: 0] += 1
         if let error = errors[id] {
             throw error
         }
@@ -168,6 +210,10 @@ private actor ReconciliationDriveClient: DriveItemClient {
             throw DriveError.itemNotFound
         }
         return item
+    }
+
+    func requestCount(for id: String) -> Int {
+        requestCounts[id, default: 0]
     }
 }
 

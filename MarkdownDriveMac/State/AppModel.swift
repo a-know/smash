@@ -553,6 +553,7 @@ final class AppModel: ObservableObject {
     var canCreateVaultItems: Bool {
         guard case .signedIn = authenticationState,
             case .loaded = vaultTreeState,
+            isDriveContentMutationEnabled,
             vaultItemCreationState != .creating,
             vaultItemRenameState != .renaming,
             vaultItemTrashState != .trashing,
@@ -626,6 +627,7 @@ final class AppModel: ObservableObject {
     func canRenameItem(id: String) -> Bool {
         guard case .signedIn = authenticationState,
             case .loaded(let tree) = vaultTreeState,
+            isDriveContentMutationEnabled,
             id != tree.root.item.id,
             let item = tree.item(id: id),
             item.capabilities?.canRename != false,
@@ -750,6 +752,7 @@ final class AppModel: ObservableObject {
     func canTrashItem(id: String) -> Bool {
         guard case .signedIn = authenticationState,
             case .loaded(let tree) = vaultTreeState,
+            isDriveContentMutationEnabled,
             id != tree.root.item.id,
             let item = tree.item(id: id),
             item.capabilities?.canTrash == true
@@ -948,8 +951,8 @@ final class AppModel: ObservableObject {
     }
 
     func createNewNote(name: String, parentFolderID: String) async {
-        guard case .loaded(let tree) = vaultTreeState,
-            vaultItemCreationState != .creating
+        guard canCreateVaultItems,
+            case .loaded(let tree) = vaultTreeState
         else {
             return
         }
@@ -987,8 +990,8 @@ final class AppModel: ObservableObject {
     }
 
     func createNewFolder(name: String, parentFolderID: String) async {
-        guard case .loaded(let tree) = vaultTreeState,
-            vaultItemCreationState != .creating
+        guard canCreateVaultItems,
+            case .loaded(let tree) = vaultTreeState
         else {
             return
         }
@@ -1024,6 +1027,9 @@ final class AppModel: ObservableObject {
     }
 
     var isDocumentEditingEnabled: Bool {
+        guard isDriveContentMutationEnabled else {
+            return false
+        }
         guard isTrashStatusLocked,
             case .loaded(let document) = documentState
         else {
@@ -1041,7 +1047,10 @@ final class AppModel: ObservableObject {
     }
 
     var canSaveDocument: Bool {
-        guard hasDirtyDocument, documentSaveState != .saving else {
+        guard isDriveContentMutationEnabled,
+            hasDirtyDocument,
+            documentSaveState != .saving
+        else {
             return false
         }
         if vaultItemRenameState == .renaming,
@@ -1054,6 +1063,13 @@ final class AppModel: ObservableObject {
             return false
         }
         return true
+    }
+
+    private var isDriveContentMutationEnabled: Bool {
+        if case .ready = driveChangeTrackingState {
+            return true
+        }
+        return false
     }
 
     func selectTreeItem(id: String?) async {
@@ -1249,7 +1265,8 @@ final class AppModel: ObservableObject {
     }
 
     func saveConflictCopy() async {
-        guard case .loaded(let document) = documentState,
+        guard isDriveContentMutationEnabled,
+            case .loaded(let document) = documentState,
             case .loaded(let tree) = vaultTreeState
         else {
             dismissConflictAlert()
@@ -1295,7 +1312,8 @@ final class AppModel: ObservableObject {
     }
 
     func overwriteConflictingDocument() async {
-        guard case .loaded(let document) = documentState,
+        guard isDriveContentMutationEnabled,
+            case .loaded(let document) = documentState,
             case .loaded(let tree) = vaultTreeState
         else {
             dismissConflictAlert()

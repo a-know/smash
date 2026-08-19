@@ -209,6 +209,52 @@ final class AppModelConcurrencyTests: XCTestCase {
         XCTAssertTrue(document.isDirty)
     }
 
+    func testChangeFeedFailureMakesLoadedContentReadOnlyWithoutDiscardingDirtyText() async {
+        let note = file(id: "note", name: "note.md")
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [TreeResponse(items: [note])],
+            controlledDownload: DriveFileDownload(
+                item: note,
+                data: Data("remote text".utf8),
+                revision: revision()
+            ),
+            changeBatchResult: .failure(.serverUnavailable)
+        )
+        let appModel = makeAppModel(driveClient: driveClient)
+        await appModel.restoreSession()
+        let documentLoad = Task { @MainActor in
+            await appModel.selectTreeItem(id: "note")
+        }
+        await driveClient.waitUntilDownloadStarts()
+        await driveClient.completeDownload()
+        await documentLoad.value
+        appModel.updateDocumentText("unsaved local text")
+
+        await appModel.refreshRemoteChanges()
+
+        guard case .unavailable = appModel.driveChangeTrackingState else {
+            return XCTFail("Expected Drive change tracking to be unavailable")
+        }
+        guard case .loaded(let document) = appModel.documentState else {
+            return XCTFail("Expected the dirty document to remain loaded")
+        }
+        XCTAssertEqual(document.text, "unsaved local text")
+        XCTAssertTrue(document.isDirty)
+        XCTAssertFalse(appModel.isDocumentEditingEnabled)
+        XCTAssertFalse(appModel.canSaveDocument)
+        XCTAssertFalse(appModel.canCreateVaultItems)
+
+        appModel.updateDocumentText("must not be accepted")
+        await appModel.createNewNote(name: "offline", parentFolderID: "vault")
+        await appModel.createNewFolder(name: "offline", parentFolderID: "vault")
+        let creationRequestCount = await driveClient.creationRequestCount
+        XCTAssertEqual(creationRequestCount, 0)
+        guard case .loaded(let unchangedDocument) = appModel.documentState else {
+            return XCTFail("Expected the dirty document to remain loaded")
+        }
+        XCTAssertEqual(unchangedDocument.text, "unsaved local text")
+    }
+
     func testFailedChangeTriggeredReloadDoesNotAdvanceCursor() async {
         let changedFile = file(id: "note", name: "changed.md")
         let driveClient = ControlledAppDriveClient(
@@ -1041,6 +1087,7 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     private var didStartTrashReconciliation = false
     private var didStartSecondListChildren = false
     private(set) var updateRequestCount = 0
+    private(set) var creationRequestCount = 0
     private(set) var renameRequestCount = 0
     private(set) var trashRequestCount = 0
     private(set) var listChildrenRequestCount = 0
@@ -1207,6 +1254,7 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         data: Data,
         mimeType: String
     ) async throws -> DriveFileMetadata {
+        creationRequestCount += 1
         didStartCreation = true
         if waitsForCreationCompletion {
             await withCheckedContinuation { continuation in
@@ -1217,6 +1265,7 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     }
 
     func createFolder(name: String, parentID: String) async throws -> DriveItem {
+        creationRequestCount += 1
         didStartCreation = true
         if waitsForCreationCompletion {
             await withCheckedContinuation { continuation in

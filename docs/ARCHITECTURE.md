@@ -57,8 +57,9 @@ AppKit types do not cross into `MarkdownDriveCore`.
 6. Saving verifies the Vault boundary and remote revision again before updating the same Drive file
    ID.
 
-After an authoritative Vault load, the app reads the account-scoped Drive changes feed from the
-cursor persisted for that account/Vault pair. Changes to IDs already in the tree, folders or
+A caller-driven remote refresh requires a prior authoritative Vault load. It reads the
+account-scoped Drive changes feed from the cursor persisted for that account/Vault pair. Automatic
+scheduling and polling are not implemented yet. Changes to IDs already in the tree, folders or
 Markdown files newly found inside the live Vault boundary, and shared-drive-level changes trigger a
 full authoritative tree reload. Changes proven to be outside the Vault and unrelated non-Markdown
 files do not. The next cursor is persisted only after all relevant changes have been reconciled and
