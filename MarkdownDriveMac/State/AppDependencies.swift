@@ -24,7 +24,8 @@ enum AppDependencies {
             vaultItemRenamer: VaultItemRenamer(driveClient: driveClient),
             vaultItemTrasher: VaultItemTrasher(driveClient: driveClient),
             vaultStore: UserDefaultsVaultStore(),
-            driveChangeCursorCoordinator: driveChangeCursorCoordinator
+            driveChangeCursorCoordinator: driveChangeCursorCoordinator,
+            driveChangeReconciler: DriveChangeReconciler(driveItemClient: driveClient)
         )
     }
 }

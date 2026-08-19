@@ -1,6 +1,6 @@
 # Markdown Drive architecture
 
-Last reviewed: 2026-08-13
+Last reviewed: 2026-08-20
 
 ## Product boundary
 
@@ -22,6 +22,7 @@ The local Swift package contains:
 - Google Drive API request/response mapping;
 - Drive item, Vault, tree, revision, and Markdown document models;
 - recursive Vault tree loading and Markdown filtering;
+- Drive change cursor coordination and Vault-boundary reconciliation;
 - Vault-boundary checks for browsing, opening, saving, and item creation;
 - UTF-8 document loading and dirty-state tracking; and
 - conflict-aware save, conflict-copy, and explicit-overwrite operations.
@@ -55,6 +56,14 @@ AppKit types do not cross into `MarkdownDriveCore`.
    revision observed during the stable download.
 6. Saving verifies the Vault boundary and remote revision again before updating the same Drive file
    ID.
+
+After an authoritative Vault load, the app reads the account-scoped Drive changes feed from the
+cursor persisted for that account/Vault pair. Changes to IDs already in the tree, folders or
+Markdown files newly found inside the live Vault boundary, and shared-drive-level changes trigger a
+full authoritative tree reload. Changes proven to be outside the Vault and unrelated non-Markdown
+files do not. The next cursor is persisted only after all relevant changes have been reconciled and
+any required reload succeeds. A rejected cursor is removed and rebuilt around a new full load.
+Remote refresh updates the tree but never replaces an open dirty editor buffer.
 
 Safe Drive reads retry once when Google rejects a cached access token: authentication refresh is
 single-flight, the request is rebuilt with the refreshed token, and a second rejection requires the
@@ -107,8 +116,9 @@ file ID is never treated as proof of Vault membership.
 ## Local state and source of truth
 
 Google Drive file content is the only authoritative document content. Local persistence is limited
-to the Vault ID and OAuth refresh credential. The in-memory editor buffer can temporarily differ from
-Drive while it is dirty or while an error is being resolved, but it is not a second canonical store.
+to the Vault ID, OAuth refresh credential, and non-secret Drive change cursors scoped by account and
+Vault. The in-memory editor buffer can temporarily differ from Drive while it is dirty or while an
+error is being resolved, but it is not a second canonical store.
 
 Refresh, failed authentication, failed networking, selection changes, and ordinary quit requests do
 not silently discard a dirty buffer. Quitting with unsaved changes requires an explicit save,
@@ -153,6 +163,8 @@ silently creating duplicate copies.
 
 Primary Drive references:
 
+- [Retrieve changes](https://developers.google.com/workspace/drive/api/guides/manage-changes)
+- [Changes: list](https://developers.google.com/workspace/drive/api/reference/rest/v3/changes/list)
 - [Files: create](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/create)
 - [Files: update](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/update)
 - [File capabilities](https://developers.google.com/workspace/drive/api/guides/manage-sharing#capabilities)
