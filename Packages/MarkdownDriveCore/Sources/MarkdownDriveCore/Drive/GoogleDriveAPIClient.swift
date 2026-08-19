@@ -1,7 +1,8 @@
 import Foundation
 
 public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteClient,
-    DriveItemCreationClient, DriveItemMutationClient, DriveSoftTrashClient, DriveChangeClient
+    DriveItemCreationClient, DriveItemMutationClient, DriveSoftTrashClient, DriveChangeClient,
+    DriveAccountClient
 {
     public static let folderMimeType = "application/vnd.google-apps.folder"
 
@@ -289,6 +290,22 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
             throw DriveError.invalidResponse
         }
         return DriveChangeCursor(rawValue: response.startPageToken)
+    }
+
+    public func getCurrentAccountID() async throws -> DriveAccountID {
+        let request = try await authorizedRequest(
+            url: baseURL.appendingPathComponent("about"),
+            queryItems: [
+                URLQueryItem(name: "fields", value: "user(permissionId,me)")
+            ]
+        )
+        let response: GoogleDriveAbout = try decode(from: await perform(request))
+        guard response.user.me,
+            !response.user.permissionID.isEmpty
+        else {
+            throw DriveError.invalidResponse
+        }
+        return DriveAccountID(rawValue: response.user.permissionID)
     }
 
     public func listChanges(since cursor: DriveChangeCursor) async throws -> DriveChangeBatch {
@@ -720,6 +737,20 @@ private struct GoogleDriveFileList: Decodable {
 
 private struct GoogleDriveStartPageToken: Decodable {
     let startPageToken: String
+}
+
+private struct GoogleDriveAbout: Decodable {
+    let user: GoogleDriveUser
+}
+
+private struct GoogleDriveUser: Decodable {
+    let permissionID: String
+    let me: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case permissionID = "permissionId"
+        case me
+    }
 }
 
 private struct GoogleDriveChangeList: Decodable {

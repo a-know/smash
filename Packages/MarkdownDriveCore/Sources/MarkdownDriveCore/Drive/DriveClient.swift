@@ -13,6 +13,16 @@ public protocol DriveChangeClient: Sendable {
     func listChanges(since cursor: DriveChangeCursor) async throws -> DriveChangeBatch
 }
 
+public protocol DriveAccountClient: Sendable {
+    func getCurrentAccountID() async throws -> DriveAccountID
+}
+
+public protocol DriveChangeCursorStore: Sendable {
+    func loadCursor(for scope: DriveChangeCursorScope) async throws -> DriveChangeCursor?
+    func saveCursor(_ cursor: DriveChangeCursor, for scope: DriveChangeCursorScope) async throws
+    func removeCursor(for scope: DriveChangeCursorScope) async throws
+}
+
 public protocol DriveContentClient: DriveItemClient {
     func downloadFile(id: String) async throws -> DriveFileDownload
 }
