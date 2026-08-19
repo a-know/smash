@@ -4,6 +4,50 @@ import XCTest
 @testable import MarkdownDriveCore
 
 final class GoogleDriveAPIClientTests: XCTestCase {
+    func testGetsCurrentDriveAccountIDWithoutRequestingEmail() async throws {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(
+                statusCode: 200,
+                body: #"{"user":{"permissionId":"permission-1","me":true}}"#
+            )
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        let accountID = try await client.getCurrentAccountID()
+
+        XCTAssertEqual(accountID, DriveAccountID(rawValue: "permission-1"))
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests[0].url?.path, "/drive/v3/about")
+        XCTAssertEqual(
+            queryValue(named: "fields", in: requests[0]),
+            "user(permissionId,me)"
+        )
+    }
+
+    func testRejectsAboutResponseForDifferentUser() async {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(
+                statusCode: 200,
+                body: #"{"user":{"permissionId":"permission-1","me":false}}"#
+            )
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        do {
+            _ = try await client.getCurrentAccountID()
+            XCTFail("Expected a non-current Drive user to be rejected")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .invalidResponse)
+        }
+    }
+
     func testGetsStartChangeCursorWithSharedDriveSupport() async throws {
         let transport = FakeDriveHTTPTransport(responses: [
             .success(statusCode: 200, body: #"{"startPageToken":"cursor-1"}"#)

@@ -16,8 +16,10 @@
 		762819FC7868AEC656928CF1 /* MarkdownDriveCore in Frameworks */ = {isa = PBXBuildFile; productRef = BFF169F5D8394E985519237E /* MarkdownDriveCore */; };
 		856FC399AC0A36E3FE012737 /* MarkdownDriveCore in Frameworks */ = {isa = PBXBuildFile; productRef = 20372CFBC2988B2E501911CE /* MarkdownDriveCore */; };
 		862FF80CEFC483C03847C3D1 /* GoogleOAuthAuthorizationFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C5EE1FAC923FC1EA7FDA99 /* GoogleOAuthAuthorizationFlow.swift */; };
+		9152699AA2A442A36DE9ABCE /* UserDefaultsDriveChangeCursorStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3821909B2E7B6E42AC8C6E10 /* UserDefaultsDriveChangeCursorStoreTests.swift */; };
 		B0053376C4C749DAED50F6BC /* GoogleAuthenticationServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0FBB7464F9461556045E26 /* GoogleAuthenticationServiceTests.swift */; };
 		B71BCCE314A8B389DB6E7F61 /* NativeMarkdownEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8614F525C4E1EE5FD88C789 /* NativeMarkdownEditor.swift */; };
+		CD5C0563AA08B688EE51C178 /* UserDefaultsDriveChangeCursorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D44DA6C272E11F1A68F2925 /* UserDefaultsDriveChangeCursorStore.swift */; };
 		D065247233EB56FB1269FA7E /* MarkdownDriveApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA1480E42F5C96887C029E9A /* MarkdownDriveApp.swift */; };
 		D1B8E18B04D6742174A6C12C /* GoogleAuthenticationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 225E67B0E375CB5DE2EFEE45 /* GoogleAuthenticationService.swift */; };
 		EEDD3317E2AF10D7D790B065 /* AppModelConcurrencyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD84C9BA4EFBCA93B447F3BD /* AppModelConcurrencyTests.swift */; };
@@ -44,11 +46,13 @@
 		225E67B0E375CB5DE2EFEE45 /* GoogleAuthenticationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleAuthenticationService.swift; sourceTree = "<group>"; };
 		2EA92C1F04E3C1E0145E60EB /* Markdown Drive.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Markdown Drive.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		3112A29460243053F89B0B6C /* KeychainRefreshTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainRefreshTokenStore.swift; sourceTree = "<group>"; };
+		3821909B2E7B6E42AC8C6E10 /* UserDefaultsDriveChangeCursorStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserDefaultsDriveChangeCursorStoreTests.swift; sourceTree = "<group>"; };
 		48CE58DA9B8910A62DD33880 /* MarkdownDriveCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MarkdownDriveCore; path = Packages/MarkdownDriveCore; sourceTree = SOURCE_ROOT; };
 		4B72804D237119F26A109EA4 /* OAuth.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = OAuth.xcconfig; sourceTree = "<group>"; };
 		76CE2CE1C3DAFADDCAE6C8F2 /* OAuthLoopbackServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OAuthLoopbackServer.swift; sourceTree = "<group>"; };
 		7786B073D173551DE63CE888 /* GoogleOAuthTokenClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleOAuthTokenClient.swift; sourceTree = "<group>"; };
 		7A0FBB7464F9461556045E26 /* GoogleAuthenticationServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleAuthenticationServiceTests.swift; sourceTree = "<group>"; };
+		7D44DA6C272E11F1A68F2925 /* UserDefaultsDriveChangeCursorStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserDefaultsDriveChangeCursorStore.swift; sourceTree = "<group>"; };
 		A1C5EE1FAC923FC1EA7FDA99 /* GoogleOAuthAuthorizationFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleOAuthAuthorizationFlow.swift; sourceTree = "<group>"; };
 		A98FCCAE58506021D3CBC793 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		B81B4AEC2433411CDB958D5B /* UserDefaultsVaultStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserDefaultsVaultStore.swift; sourceTree = "<group>"; };
@@ -91,6 +95,7 @@
 		29E82F675FAD4D172587236D /* Persistence */ = {
 			isa = PBXGroup;
 			children = (
+				7D44DA6C272E11F1A68F2925 /* UserDefaultsDriveChangeCursorStore.swift */,
 				B81B4AEC2433411CDB958D5B /* UserDefaultsVaultStore.swift */,
 			);
 			path = Persistence;
@@ -161,6 +166,7 @@
 			children = (
 				FD84C9BA4EFBCA93B447F3BD /* AppModelConcurrencyTests.swift */,
 				7A0FBB7464F9461556045E26 /* GoogleAuthenticationServiceTests.swift */,
+				3821909B2E7B6E42AC8C6E10 /* UserDefaultsDriveChangeCursorStoreTests.swift */,
 			);
 			path = MarkdownDriveMacTests;
 			sourceTree = "<group>";
@@ -276,6 +282,7 @@
 				3BB1D3A7FB872B483D0FE89C /* MarkdownEditorCommands.swift in Sources */,
 				B71BCCE314A8B389DB6E7F61 /* NativeMarkdownEditor.swift in Sources */,
 				FDC16AAA154FE5841DEA0EE0 /* OAuthLoopbackServer.swift in Sources */,
+				CD5C0563AA08B688EE51C178 /* UserDefaultsDriveChangeCursorStore.swift in Sources */,
 				1B868C7244CC95C4A6200F53 /* UserDefaultsVaultStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -286,6 +293,7 @@
 			files = (
 				EEDD3317E2AF10D7D790B065 /* AppModelConcurrencyTests.swift in Sources */,
 				B0053376C4C749DAED50F6BC /* GoogleAuthenticationServiceTests.swift in Sources */,
+				9152699AA2A442A36DE9ABCE /* UserDefaultsDriveChangeCursorStoreTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
