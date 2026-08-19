@@ -3,6 +3,7 @@ import Foundation
 public enum DriveError: Error, Equatable, Sendable {
     case authenticationRequired
     case browserBoundaryViolation
+    case changeCursorInvalid
     case downloadNotAllowed
     case fileChangedDuringDownload
     case incompleteSearch
@@ -34,6 +35,8 @@ extension DriveError: LocalizedError {
             "Google Drive authentication is required."
         case .browserBoundaryViolation:
             "That folder is outside the current browser location."
+        case .changeCursorInvalid:
+            "The saved Google Drive change position is no longer usable."
         case .downloadNotAllowed:
             "Google Drive does not allow this file to be downloaded."
         case .fileChangedDuringDownload:

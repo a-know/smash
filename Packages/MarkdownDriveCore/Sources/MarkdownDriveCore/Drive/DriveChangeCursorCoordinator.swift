@@ -60,4 +60,31 @@ public actor DriveChangeCursorCoordinator {
             for: preparedCursor.scope
         )
     }
+
+    public func fetchChanges(
+        since activeCursor: PreparedDriveChangeCursor
+    ) async throws -> DriveChangeBatch {
+        do {
+            return try await changeClient.listChanges(since: activeCursor.cursor)
+        } catch DriveError.invalidResponse {
+            // A partial or malformed feed cannot safely advance the saved position.
+            throw DriveError.changeCursorInvalid
+        }
+    }
+
+    public func advance(
+        to cursor: DriveChangeCursor,
+        for scope: DriveChangeCursorScope
+    ) async throws -> PreparedDriveChangeCursor {
+        try await cursorStore.saveCursor(cursor, for: scope)
+        return PreparedDriveChangeCursor(
+            scope: scope,
+            cursor: cursor,
+            requiresPersistence: false
+        )
+    }
+
+    public func invalidate(_ activeCursor: PreparedDriveChangeCursor) async throws {
+        try await cursorStore.removeCursor(for: activeCursor.scope)
+    }
 }

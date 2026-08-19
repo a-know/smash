@@ -198,6 +198,27 @@ final class GoogleDriveAPIClientTests: XCTestCase {
         }
     }
 
+    func testChangesClassifyRejectedPageTokenForSafeRecovery() async {
+        for statusCode in [400, 410] {
+            let transport = FakeDriveHTTPTransport(responses: [
+                .success(statusCode: statusCode, body: #"{"error":"invalid page token"}"#)
+            ])
+            let client = GoogleDriveAPIClient(
+                accessTokenProvider: FakeDriveAccessTokenProvider(),
+                transport: transport
+            )
+
+            do {
+                _ = try await client.listChanges(
+                    since: DriveChangeCursor(rawValue: "rejected")
+                )
+                XCTFail("Expected status \(statusCode) to invalidate the cursor")
+            } catch {
+                XCTAssertEqual(error as? DriveError, .changeCursorInvalid)
+            }
+        }
+    }
+
     func testListChildrenFetchesEveryPageAndMapsFilesAndFolders() async throws {
         let transport = FakeDriveHTTPTransport(responses: [
             .success(
