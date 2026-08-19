@@ -4,6 +4,156 @@ import XCTest
 @testable import MarkdownDriveCore
 
 final class GoogleDriveAPIClientTests: XCTestCase {
+    func testGetsStartChangeCursorWithSharedDriveSupport() async throws {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(statusCode: 200, body: #"{"startPageToken":"cursor-1"}"#)
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        let cursor = try await client.getStartChangeCursor()
+
+        XCTAssertEqual(cursor, DriveChangeCursor(rawValue: "cursor-1"))
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests[0].url?.path, "/drive/v3/changes/startPageToken")
+        XCTAssertEqual(queryValue(named: "supportsAllDrives", in: requests[0]), "true")
+        XCTAssertEqual(queryValue(named: "fields", in: requests[0]), "startPageToken")
+    }
+
+    func testListsEveryChangePageAndReturnsTerminalCursor() async throws {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(
+                statusCode: 200,
+                body: """
+                    {
+                      "changes": [
+                        {
+                          "changeType": "file",
+                          "fileId": "file-1",
+                          "file": {
+                            "id": "file-1",
+                            "name": "memo.md",
+                            "mimeType": "text/markdown",
+                            "parents": ["vault"],
+                            "trashed": false
+                          }
+                        }
+                      ],
+                      "nextPageToken": "page-2"
+                    }
+                    """
+            ),
+            .success(
+                statusCode: 200,
+                body: """
+                    {
+                      "changes": [
+                        {
+                          "changeType": "file",
+                          "fileId": "file-2",
+                          "removed": true
+                        },
+                        {
+                          "changeType": "drive",
+                          "driveId": "shared-drive",
+                          "removed": false
+                        }
+                      ],
+                      "newStartPageToken": "cursor-2"
+                    }
+                    """
+            ),
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        let batch = try await client.listChanges(
+            since: DriveChangeCursor(rawValue: "cursor-1")
+        )
+
+        XCTAssertEqual(
+            batch,
+            DriveChangeBatch(
+                changes: [
+                    .file(
+                        id: "file-1",
+                        removed: false,
+                        item: DriveItem(
+                            id: "file-1",
+                            name: "memo.md",
+                            kind: .file,
+                            mimeType: "text/markdown",
+                            parentIDs: ["vault"]
+                        )
+                    ),
+                    .file(id: "file-2", removed: true, item: nil),
+                    .sharedDrive(id: "shared-drive", removed: false),
+                ],
+                newCursor: DriveChangeCursor(rawValue: "cursor-2")
+            )
+        )
+
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertEqual(requests[0].url?.path, "/drive/v3/changes")
+        XCTAssertEqual(queryValue(named: "pageToken", in: requests[0]), "cursor-1")
+        XCTAssertEqual(queryValue(named: "pageToken", in: requests[1]), "page-2")
+        XCTAssertEqual(queryValue(named: "spaces", in: requests[0]), "drive")
+        XCTAssertEqual(queryValue(named: "pageSize", in: requests[0]), "1000")
+        XCTAssertEqual(queryValue(named: "includeRemoved", in: requests[0]), "true")
+        XCTAssertEqual(queryValue(named: "supportsAllDrives", in: requests[0]), "true")
+        XCTAssertEqual(queryValue(named: "includeItemsFromAllDrives", in: requests[0]), "true")
+    }
+
+    func testChangesRejectRepeatedPageToken() async {
+        let repeatedPage = """
+            {
+              "changes": [],
+              "nextPageToken": "cursor-1"
+            }
+            """
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(statusCode: 200, body: repeatedPage)
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        do {
+            _ = try await client.listChanges(
+                since: DriveChangeCursor(rawValue: "cursor-1")
+            )
+            XCTFail("Expected repeated page token to fail")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .invalidResponse)
+        }
+    }
+
+    func testChangesRequireTerminalNewCursor() async {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(statusCode: 200, body: #"{"changes":[]}"#)
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        do {
+            _ = try await client.listChanges(
+                since: DriveChangeCursor(rawValue: "cursor-1")
+            )
+            XCTFail("Expected terminal cursor to be required")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .invalidResponse)
+        }
+    }
+
     func testListChildrenFetchesEveryPageAndMapsFilesAndFolders() async throws {
         let transport = FakeDriveHTTPTransport(responses: [
             .success(

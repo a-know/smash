@@ -8,6 +8,11 @@ public protocol DriveClient: DriveItemClient {
     func listChildren(of folderID: String) async throws -> [DriveItem]
 }
 
+public protocol DriveChangeClient: Sendable {
+    func getStartChangeCursor() async throws -> DriveChangeCursor
+    func listChanges(since cursor: DriveChangeCursor) async throws -> DriveChangeBatch
+}
+
 public protocol DriveContentClient: DriveItemClient {
     func downloadFile(id: String) async throws -> DriveFileDownload
 }

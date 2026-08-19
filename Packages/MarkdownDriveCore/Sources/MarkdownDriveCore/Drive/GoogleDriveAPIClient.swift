@@ -1,7 +1,7 @@
 import Foundation
 
 public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteClient,
-    DriveItemCreationClient, DriveItemMutationClient, DriveSoftTrashClient
+    DriveItemCreationClient, DriveItemMutationClient, DriveSoftTrashClient, DriveChangeClient
 {
     public static let folderMimeType = "application/vnd.google-apps.folder"
 
@@ -274,6 +274,76 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
         return items
     }
 
+    public func getStartChangeCursor() async throws -> DriveChangeCursor {
+        let request = try await authorizedRequest(
+            url: baseURL.appendingPathComponent("changes/startPageToken"),
+            queryItems: [
+                URLQueryItem(name: "supportsAllDrives", value: "true"),
+                URLQueryItem(name: "fields", value: "startPageToken"),
+            ]
+        )
+        let response: GoogleDriveStartPageToken = try decode(
+            from: await perform(request)
+        )
+        guard !response.startPageToken.isEmpty else {
+            throw DriveError.invalidResponse
+        }
+        return DriveChangeCursor(rawValue: response.startPageToken)
+    }
+
+    public func listChanges(since cursor: DriveChangeCursor) async throws -> DriveChangeBatch {
+        guard !cursor.rawValue.isEmpty else {
+            throw DriveError.invalidResponse
+        }
+
+        var changes: [DriveChange] = []
+        var pageToken = cursor.rawValue
+        var seenPageTokens: Set<String> = [pageToken]
+
+        while true {
+            let page = try await listChangesPage(pageToken: pageToken)
+            changes.append(contentsOf: try page.changes.map { try $0.driveChange })
+
+            if let nextPageToken = page.nextPageToken, !nextPageToken.isEmpty {
+                guard seenPageTokens.insert(nextPageToken).inserted else {
+                    throw DriveError.invalidResponse
+                }
+                pageToken = nextPageToken
+                continue
+            }
+
+            guard let newStartPageToken = page.newStartPageToken,
+                !newStartPageToken.isEmpty
+            else {
+                throw DriveError.invalidResponse
+            }
+            return DriveChangeBatch(
+                changes: changes,
+                newCursor: DriveChangeCursor(rawValue: newStartPageToken)
+            )
+        }
+    }
+
+    private func listChangesPage(pageToken: String) async throws -> GoogleDriveChangeList {
+        let request = try await authorizedRequest(
+            url: baseURL.appendingPathComponent("changes"),
+            queryItems: [
+                URLQueryItem(name: "pageToken", value: pageToken),
+                URLQueryItem(name: "spaces", value: "drive"),
+                URLQueryItem(name: "pageSize", value: "1000"),
+                URLQueryItem(name: "includeRemoved", value: "true"),
+                URLQueryItem(name: "supportsAllDrives", value: "true"),
+                URLQueryItem(name: "includeItemsFromAllDrives", value: "true"),
+                URLQueryItem(
+                    name: "fields",
+                    value:
+                        "nextPageToken,newStartPageToken,changes(changeType,fileId,removed,driveId,file(\(Self.fileFields)))"
+                ),
+            ]
+        )
+        return try decode(from: await perform(request))
+    }
+
     private func listChildrenPage(
         of folderID: String,
         pageToken: String?
@@ -533,6 +603,14 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
         }
     }
 
+    private func decode<Value: Decodable>(from data: Data) throws -> Value {
+        do {
+            return try JSONDecoder().decode(Value.self, from: data)
+        } catch {
+            throw DriveError.invalidResponse
+        }
+    }
+
     private func escapedQueryLiteral(_ value: String) -> String {
         value
             .replacingOccurrences(of: "\\", with: "\\\\")
@@ -637,6 +715,82 @@ private struct GoogleDriveFileList: Decodable {
         files = try container.decodeIfPresent([GoogleDriveFile].self, forKey: .files) ?? []
         nextPageToken = try container.decodeIfPresent(String.self, forKey: .nextPageToken)
         incompleteSearch = try container.decodeIfPresent(Bool.self, forKey: .incompleteSearch) ?? false
+    }
+}
+
+private struct GoogleDriveStartPageToken: Decodable {
+    let startPageToken: String
+}
+
+private struct GoogleDriveChangeList: Decodable {
+    let changes: [GoogleDriveChange]
+    let nextPageToken: String?
+    let newStartPageToken: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case changes
+        case nextPageToken
+        case newStartPageToken
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        changes = try container.decodeIfPresent([GoogleDriveChange].self, forKey: .changes) ?? []
+        nextPageToken = try container.decodeIfPresent(String.self, forKey: .nextPageToken)
+        newStartPageToken = try container.decodeIfPresent(String.self, forKey: .newStartPageToken)
+    }
+}
+
+private struct GoogleDriveChange: Decodable {
+    let changeType: String
+    let fileID: String?
+    let removed: Bool
+    let driveID: String?
+    let file: GoogleDriveFile?
+
+    private enum CodingKeys: String, CodingKey {
+        case changeType
+        case fileID = "fileId"
+        case removed
+        case driveID = "driveId"
+        case file
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        changeType = try container.decode(String.self, forKey: .changeType)
+        fileID = try container.decodeIfPresent(String.self, forKey: .fileID)
+        removed = try container.decodeIfPresent(Bool.self, forKey: .removed) ?? false
+        driveID = try container.decodeIfPresent(String.self, forKey: .driveID)
+        file = try container.decodeIfPresent(GoogleDriveFile.self, forKey: .file)
+    }
+
+    var driveChange: DriveChange {
+        get throws {
+            switch changeType {
+            case "file":
+                guard let fileID, !fileID.isEmpty else {
+                    throw DriveError.invalidResponse
+                }
+                if removed {
+                    guard file == nil || file?.id == fileID else {
+                        throw DriveError.invalidResponse
+                    }
+                    return .file(id: fileID, removed: true, item: file?.driveItem)
+                }
+                guard let file, file.id == fileID else {
+                    throw DriveError.invalidResponse
+                }
+                return .file(id: fileID, removed: false, item: file.driveItem)
+            case "drive":
+                guard let driveID, !driveID.isEmpty else {
+                    throw DriveError.invalidResponse
+                }
+                return .sharedDrive(id: driveID, removed: removed)
+            default:
+                throw DriveError.invalidResponse
+            }
+        }
     }
 }
 
