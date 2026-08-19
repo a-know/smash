@@ -20,6 +20,91 @@ final class AppModelConcurrencyTests: XCTestCase {
         XCTAssertEqual(listChildrenRequestCount, 0)
     }
 
+    func testInitialVaultLoadPersistsPreparedChangeCursor() async {
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [TreeResponse(items: [])]
+        )
+        let cursorStore = FakeAppDriveChangeCursorStore()
+        let appModel = makeAppModel(
+            driveClient: driveClient,
+            cursorStore: cursorStore
+        )
+
+        await appModel.restoreSession()
+
+        let scope = DriveChangeCursorScope(
+            accountID: DriveAccountID(rawValue: "account"),
+            vaultRootFolderID: "vault"
+        )
+        let storedCursor = await cursorStore.cursor(for: scope)
+        XCTAssertEqual(storedCursor, DriveChangeCursor(rawValue: "start-cursor"))
+        XCTAssertEqual(
+            appModel.driveChangeTrackingState,
+            .ready(scope: scope, cursor: DriveChangeCursor(rawValue: "start-cursor"))
+        )
+        let requestOrder = await driveClient.changeTrackingRequestOrder
+        XCTAssertEqual(requestOrder, ["account", "start", "tree"])
+    }
+
+    func testFailedVaultLoadDoesNotPersistPreparedChangeCursor() async {
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [TreeResponse(error: .serverUnavailable)]
+        )
+        let cursorStore = FakeAppDriveChangeCursorStore()
+        let appModel = makeAppModel(
+            driveClient: driveClient,
+            cursorStore: cursorStore
+        )
+
+        await appModel.restoreSession()
+
+        let saveCount = await cursorStore.saveCount
+        XCTAssertEqual(saveCount, 0)
+        XCTAssertEqual(appModel.driveChangeTrackingState, DriveChangeTrackingState.idle)
+        guard case .failed = appModel.vaultTreeState else {
+            return XCTFail("Expected the Vault tree load to fail")
+        }
+    }
+
+    func testChangeCursorFailureDoesNotBlockAuthoritativeVaultLoad() async {
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [TreeResponse(items: [file(id: "note", name: "note.md")])],
+            accountError: .serverUnavailable
+        )
+        let appModel = makeAppModel(driveClient: driveClient)
+
+        await appModel.restoreSession()
+
+        guard case .loaded(let tree) = appModel.vaultTreeState else {
+            return XCTFail("Expected the authoritative Vault tree to load")
+        }
+        XCTAssertNotNil(tree.markdownFile(id: "note"))
+        guard case .unavailable = appModel.driveChangeTrackingState else {
+            return XCTFail("Expected Drive change tracking to be unavailable")
+        }
+    }
+
+    func testChangeCursorPersistenceFailureDoesNotDiscardLoadedVaultTree() async {
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [TreeResponse(items: [file(id: "note", name: "note.md")])]
+        )
+        let cursorStore = FakeAppDriveChangeCursorStore(saveError: .serverUnavailable)
+        let appModel = makeAppModel(
+            driveClient: driveClient,
+            cursorStore: cursorStore
+        )
+
+        await appModel.restoreSession()
+
+        guard case .loaded(let tree) = appModel.vaultTreeState else {
+            return XCTFail("Expected the authoritative Vault tree to remain loaded")
+        }
+        XCTAssertNotNil(tree.markdownFile(id: "note"))
+        guard case .unavailable = appModel.driveChangeTrackingState else {
+            return XCTFail("Expected Drive change tracking to be unavailable")
+        }
+    }
+
     func testOlderVaultRefreshCannotOverwriteNewerTree() async throws {
         let driveClient = ControlledAppDriveClient(
             treeResponses: [
@@ -709,7 +794,8 @@ final class AppModelConcurrencyTests: XCTestCase {
 
     private func makeAppModel(
         driveClient: ControlledAppDriveClient,
-        vaultStore: any VaultStore = FakeAppVaultStore()
+        vaultStore: any VaultStore = FakeAppVaultStore(),
+        cursorStore: any DriveChangeCursorStore = FakeAppDriveChangeCursorStore()
     ) -> AppModel {
         let authenticationController = AuthenticationController(
             service: FakeAppAuthenticationService()
@@ -723,7 +809,12 @@ final class AppModelConcurrencyTests: XCTestCase {
             vaultItemCreator: VaultItemCreator(driveClient: driveClient),
             vaultItemRenamer: VaultItemRenamer(driveClient: driveClient),
             vaultItemTrasher: VaultItemTrasher(driveClient: driveClient),
-            vaultStore: vaultStore
+            vaultStore: vaultStore,
+            driveChangeCursorCoordinator: DriveChangeCursorCoordinator(
+                accountClient: driveClient,
+                changeClient: driveClient,
+                cursorStore: cursorStore
+            )
         )
     }
 }
@@ -744,7 +835,7 @@ private struct TreeResponse: Sendable {
 }
 
 private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWriteClient,
-    DriveItemCreationClient, DriveItemMutationClient
+    DriveItemCreationClient, DriveItemMutationClient, DriveAccountClient, DriveChangeClient
 {
     private let controlledDownload: DriveFileDownload?
     private let fileCreationResult: Result<DriveFileMetadata, DriveError>
@@ -757,6 +848,7 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     private let trashReconciliationItem: DriveItem?
     private let waitsForTrashReconciliationCompletion: Bool
     private let waitsForSecondListChildrenCompletion: Bool
+    private let accountError: DriveError?
     private var renamedItems: [String: DriveItem] = [:]
     private var treeResponses: [TreeResponse]
     private var downloadContinuation: CheckedContinuation<DriveFileDownload, Never>?
@@ -778,6 +870,7 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     private(set) var renameRequestCount = 0
     private(set) var trashRequestCount = 0
     private(set) var listChildrenRequestCount = 0
+    private(set) var changeTrackingRequestOrder: [String] = []
 
     init(
         treeResponses: [TreeResponse],
@@ -791,7 +884,8 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         trashError: DriveError? = nil,
         trashReconciliationItem: DriveItem? = nil,
         waitsForTrashReconciliationCompletion: Bool = false,
-        waitsForSecondListChildrenCompletion: Bool = false
+        waitsForSecondListChildrenCompletion: Bool = false,
+        accountError: DriveError? = nil
     ) {
         self.treeResponses = treeResponses
         self.controlledDownload = controlledDownload
@@ -805,6 +899,7 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         self.trashReconciliationItem = trashReconciliationItem
         self.waitsForTrashReconciliationCompletion = waitsForTrashReconciliationCompletion
         self.waitsForSecondListChildrenCompletion = waitsForSecondListChildrenCompletion
+        self.accountError = accountError
     }
 
     func getItem(id: String) async throws -> DriveItem {
@@ -827,6 +922,7 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     }
 
     func listChildren(of folderID: String) async throws -> [DriveItem] {
+        changeTrackingRequestOrder.append("tree")
         listChildrenRequestCount += 1
         if waitsForSecondListChildrenCompletion,
             listChildrenRequestCount == 2
@@ -844,6 +940,23 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
             try await Task.sleep(nanoseconds: response.delayNanoseconds)
         }
         return try response.result.get()
+    }
+
+    func getCurrentAccountID() async throws -> DriveAccountID {
+        changeTrackingRequestOrder.append("account")
+        if let accountError {
+            throw accountError
+        }
+        return DriveAccountID(rawValue: "account")
+    }
+
+    func getStartChangeCursor() async throws -> DriveChangeCursor {
+        changeTrackingRequestOrder.append("start")
+        return DriveChangeCursor(rawValue: "start-cursor")
+    }
+
+    func listChanges(since cursor: DriveChangeCursor) async throws -> DriveChangeBatch {
+        DriveChangeBatch(changes: [], newCursor: cursor)
     }
 
     func downloadFile(id: String) async throws -> DriveFileDownload {
@@ -1099,6 +1212,39 @@ private actor FakeAppVaultStore: VaultStore {
     func saveVault(_ vault: Vault) async throws {}
 
     func clearVault() async throws {}
+}
+
+private actor FakeAppDriveChangeCursorStore: DriveChangeCursorStore {
+    private var cursors: [DriveChangeCursorScope: DriveChangeCursor] = [:]
+    private let saveError: DriveError?
+    private(set) var saveCount = 0
+
+    init(saveError: DriveError? = nil) {
+        self.saveError = saveError
+    }
+
+    func loadCursor(for scope: DriveChangeCursorScope) async throws -> DriveChangeCursor? {
+        cursors[scope]
+    }
+
+    func saveCursor(
+        _ cursor: DriveChangeCursor,
+        for scope: DriveChangeCursorScope
+    ) async throws {
+        saveCount += 1
+        if let saveError {
+            throw saveError
+        }
+        cursors[scope] = cursor
+    }
+
+    func removeCursor(for scope: DriveChangeCursorScope) async throws {
+        cursors[scope] = nil
+    }
+
+    func cursor(for scope: DriveChangeCursorScope) -> DriveChangeCursor? {
+        cursors[scope]
+    }
 }
 
 private actor ControlledAppVaultStore: VaultStore {

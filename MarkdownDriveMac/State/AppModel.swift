@@ -16,6 +16,13 @@ enum VaultTreeState: Equatable {
     case failed(String)
 }
 
+enum DriveChangeTrackingState: Equatable {
+    case idle
+    case preparing
+    case ready(scope: DriveChangeCursorScope, cursor: DriveChangeCursor)
+    case unavailable(String)
+}
+
 enum DocumentState: Equatable {
     case idle
     case loading(fileID: String)
@@ -67,6 +74,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var vaultPersistenceError: String?
     @Published private(set) var vaultBrowserState: VaultBrowserState = .idle
     @Published private(set) var vaultTreeState: VaultTreeState = .idle
+    @Published private(set) var driveChangeTrackingState: DriveChangeTrackingState = .idle
     @Published private(set) var documentState: DocumentState = .idle
     @Published private(set) var documentSaveState: DocumentSaveState = .idle
     @Published private(set) var selectedTreeItemID: String?
@@ -94,6 +102,7 @@ final class AppModel: ObservableObject {
     private let vaultItemRenamer: VaultItemRenamer
     private let vaultItemTrasher: VaultItemTrasher
     private let vaultStore: any VaultStore
+    private let driveChangeCursorCoordinator: DriveChangeCursorCoordinator
     private var didAttemptRestore = false
     private var authenticationGeneration: UInt64 = 0
     private var vaultRestoreID: UUID?
@@ -107,6 +116,7 @@ final class AppModel: ObservableObject {
     private var trashTargetItemID: String?
     private var trashAffectedItemIDs: Set<String> = []
     private var trashVaultTree: VaultTree?
+    private var activeDriveChangeCursor: PreparedDriveChangeCursor?
 
     init(
         authenticationController: AuthenticationController,
@@ -118,6 +128,7 @@ final class AppModel: ObservableObject {
         vaultItemRenamer: VaultItemRenamer,
         vaultItemTrasher: VaultItemTrasher,
         vaultStore: any VaultStore,
+        driveChangeCursorCoordinator: DriveChangeCursorCoordinator,
         initialAuthenticationState: AuthenticationState = .signedOut
     ) {
         self.authenticationController = authenticationController
@@ -129,6 +140,7 @@ final class AppModel: ObservableObject {
         self.vaultItemRenamer = vaultItemRenamer
         self.vaultItemTrasher = vaultItemTrasher
         self.vaultStore = vaultStore
+        self.driveChangeCursorCoordinator = driveChangeCursorCoordinator
         authenticationState = initialAuthenticationState
     }
 
@@ -171,6 +183,7 @@ final class AppModel: ObservableObject {
         if authenticationState == .signedOut {
             selectedVault = nil
             vaultTreeState = .idle
+            resetDriveChangeTracking()
             clearDocument()
             dismissVaultBrowser()
         }
@@ -223,7 +236,7 @@ final class AppModel: ObservableObject {
             guard authenticationGeneration == generation else {
                 return
             }
-            selectedVault = vault
+            setSelectedVault(vault)
             clearDocument()
             vaultPersistenceError = nil
             dismissVaultBrowser()
@@ -281,7 +294,7 @@ final class AppModel: ObservableObject {
                 return
             }
             vaultTreeLoadID = nil
-            selectedVault = restoredVault
+            setSelectedVault(restoredVault)
             vaultPersistenceError = nil
             await loadVaultTree()
         } catch {
@@ -292,6 +305,7 @@ final class AppModel: ObservableObject {
                 return
             }
             selectedVault = nil
+            resetDriveChangeTracking()
             vaultPersistenceError = "The saved Vault selection could not be restored."
         }
     }
@@ -300,6 +314,7 @@ final class AppModel: ObservableObject {
         guard let selectedVault else {
             vaultTreeLoadID = nil
             vaultTreeState = .idle
+            resetDriveChangeTracking()
             return
         }
         let loadID = UUID()
@@ -307,6 +322,26 @@ final class AppModel: ObservableObject {
         let vaultRootFolderID = selectedVault.rootFolderID
         vaultTreeLoadID = loadID
         vaultTreeState = .loading
+
+        var preparedCursor = activeDriveChangeCursor
+        var cursorPreparationError: (any Error)?
+        if preparedCursor?.scope.vaultRootFolderID != vaultRootFolderID {
+            driveChangeTrackingState = .preparing
+            do {
+                preparedCursor = try await driveChangeCursorCoordinator.prepare(
+                    vaultRootFolderID: vaultRootFolderID
+                )
+            } catch {
+                cursorPreparationError = error
+            }
+            guard vaultTreeLoadID == loadID,
+                authenticationGeneration == generation,
+                self.selectedVault?.rootFolderID == vaultRootFolderID
+            else {
+                return
+            }
+        }
+
         do {
             let tree = try await vaultTreeLoader.load(vault: selectedVault)
             guard vaultTreeLoadID == loadID,
@@ -315,6 +350,39 @@ final class AppModel: ObservableObject {
             else {
                 return
             }
+
+            if let preparedCursor {
+                do {
+                    try await driveChangeCursorCoordinator.commit(preparedCursor)
+                    guard vaultTreeLoadID == loadID,
+                        authenticationGeneration == generation,
+                        self.selectedVault?.rootFolderID == vaultRootFolderID
+                    else {
+                        return
+                    }
+                    let activeCursor = PreparedDriveChangeCursor(
+                        scope: preparedCursor.scope,
+                        cursor: preparedCursor.cursor,
+                        requiresPersistence: false
+                    )
+                    activeDriveChangeCursor = activeCursor
+                    driveChangeTrackingState = .ready(
+                        scope: activeCursor.scope,
+                        cursor: activeCursor.cursor
+                    )
+                } catch {
+                    guard vaultTreeLoadID == loadID,
+                        authenticationGeneration == generation,
+                        self.selectedVault?.rootFolderID == vaultRootFolderID
+                    else {
+                        return
+                    }
+                    activeDriveChangeCursor = nil
+                    driveChangeTrackingState = .unavailable(error.localizedDescription)
+                }
+            } else if let cursorPreparationError {
+                driveChangeTrackingState = .unavailable(cursorPreparationError.localizedDescription)
+            }
             vaultTreeState = .loaded(tree)
         } catch {
             guard vaultTreeLoadID == loadID,
@@ -322,6 +390,15 @@ final class AppModel: ObservableObject {
                 self.selectedVault?.rootFolderID == vaultRootFolderID
             else {
                 return
+            }
+            if activeDriveChangeCursor == nil {
+                if let cursorPreparationError {
+                    driveChangeTrackingState = .unavailable(
+                        cursorPreparationError.localizedDescription
+                    )
+                } else {
+                    driveChangeTrackingState = .idle
+                }
             }
             vaultTreeState = .failed(error.localizedDescription)
             transitionToReauthenticationIfNeeded(error)
@@ -1349,6 +1426,18 @@ final class AppModel: ObservableObject {
         vaultTreeLoadID = nil
     }
 
+    private func setSelectedVault(_ vault: Vault?) {
+        if selectedVault?.rootFolderID != vault?.rootFolderID {
+            resetDriveChangeTracking()
+        }
+        selectedVault = vault
+    }
+
+    private func resetDriveChangeTracking() {
+        activeDriveChangeCursor = nil
+        driveChangeTrackingState = .idle
+    }
+
     private func transitionToReauthenticationIfNeeded(_ error: any Error) {
         if let authenticationError = error as? AuthenticationError,
             authenticationError == .reauthenticationRequired
@@ -1393,6 +1482,7 @@ final class AppModel: ObservableObject {
     private func invalidateOutstandingOperationsForAuthenticationChange() {
         let preserveDirtyDocument = hasDirtyDocument
         invalidateVaultLoads()
+        resetDriveChangeTracking()
         cancelActiveDocumentLoad()
         if !preserveDirtyDocument {
             documentState = .idle

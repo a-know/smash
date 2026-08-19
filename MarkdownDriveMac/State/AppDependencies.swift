@@ -9,6 +9,11 @@ enum AppDependencies {
         let driveClient = GoogleDriveAPIClient(
             accessTokenProvider: authenticationController
         )
+        let driveChangeCursorCoordinator = DriveChangeCursorCoordinator(
+            accountClient: driveClient,
+            changeClient: driveClient,
+            cursorStore: UserDefaultsDriveChangeCursorStore()
+        )
         return AppModel(
             authenticationController: authenticationController,
             driveFolderBrowser: DriveFolderBrowser(driveClient: driveClient),
@@ -18,7 +23,8 @@ enum AppDependencies {
             vaultItemCreator: VaultItemCreator(driveClient: driveClient),
             vaultItemRenamer: VaultItemRenamer(driveClient: driveClient),
             vaultItemTrasher: VaultItemTrasher(driveClient: driveClient),
-            vaultStore: UserDefaultsVaultStore()
+            vaultStore: UserDefaultsVaultStore(),
+            driveChangeCursorCoordinator: driveChangeCursorCoordinator
         )
     }
 }
