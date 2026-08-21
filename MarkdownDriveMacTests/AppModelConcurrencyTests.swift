@@ -194,6 +194,24 @@ final class AppModelConcurrencyTests: XCTestCase {
         }
     }
 
+    func testStoppingAutomaticRefreshImmediatelyPreventsInitialDriveRead() async throws {
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [TreeResponse(items: [file(id: "note", name: "note.md")])]
+        )
+        let appModel = makeAppModel(
+            driveClient: driveClient,
+            automaticRemoteRefreshInterval: .seconds(1)
+        )
+        await appModel.restoreSession()
+
+        appModel.startAutomaticRemoteRefresh()
+        appModel.stopAutomaticRemoteRefresh()
+        try await Task.sleep(nanoseconds: 30_000_000)
+
+        let requestCount = await driveClient.listChangesRequestCount
+        XCTAssertEqual(requestCount, 0)
+    }
+
     func testAutomaticRemoteRefreshRetriesAuthoritativeLoadWhenTrackingIsUnavailable() async {
         let driveClient = ControlledAppDriveClient(
             treeResponses: [

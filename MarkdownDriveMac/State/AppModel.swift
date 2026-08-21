@@ -544,6 +544,9 @@ final class AppModel: ObservableObject {
         let generation = automaticRemoteRefreshGeneration
         let interval = automaticRemoteRefreshInterval
         automaticRemoteRefreshTask = Task { [weak self] in
+            guard self?.automaticRemoteRefreshGeneration == generation else {
+                return
+            }
             await self?.performAutomaticRemoteRefresh()
             while self?.automaticRemoteRefreshGeneration == generation {
                 do {
