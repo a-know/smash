@@ -908,6 +908,16 @@ private struct MarkdownEditorDetail: View {
                                     .foregroundStyle(.secondary)
                             }
                         }
+                        if let reason = appModel.driveReadOnlyReason {
+                            Label("Drive unavailable — read only", systemImage: "wifi.slash")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                                .lineLimit(1)
+                                .help(reason)
+                                .accessibilityLabel(
+                                    "Google Drive is unavailable. The editor is read only. \(reason)"
+                                )
+                        }
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
