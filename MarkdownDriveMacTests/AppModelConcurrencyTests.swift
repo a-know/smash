@@ -134,6 +134,51 @@ final class AppModelConcurrencyTests: XCTestCase {
         XCTAssertEqual(storedCursor, DriveChangeCursor(rawValue: "next-cursor"))
     }
 
+    func testAutomaticRemoteRefreshRunsImmediatelyAndPeriodicallyWithoutDuplicateLoops() async throws {
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [TreeResponse(items: [file(id: "note", name: "note.md")])]
+        )
+        let appModel = makeAppModel(
+            driveClient: driveClient,
+            automaticRemoteRefreshInterval: .milliseconds(20)
+        )
+        await appModel.restoreSession()
+
+        appModel.startAutomaticRemoteRefresh()
+        appModel.startAutomaticRemoteRefresh()
+        await driveClient.waitUntilListChangesRequestCount(2)
+        appModel.stopAutomaticRemoteRefresh()
+
+        let requestCountAfterStop = await driveClient.listChangesRequestCount
+        try await Task.sleep(nanoseconds: 60_000_000)
+        let finalRequestCount = await driveClient.listChangesRequestCount
+        XCTAssertEqual(finalRequestCount, requestCountAfterStop)
+    }
+
+    func testAutomaticRemoteRefreshRetriesAuthoritativeLoadWhenTrackingIsUnavailable() async {
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [
+                TreeResponse(items: [file(id: "note", name: "note.md")]),
+                TreeResponse(items: [file(id: "note", name: "note.md")]),
+            ],
+            accountError: .serverUnavailable
+        )
+        let appModel = makeAppModel(driveClient: driveClient)
+        await appModel.restoreSession()
+
+        guard case .unavailable = appModel.driveChangeTrackingState else {
+            return XCTFail("Expected Drive change tracking to be unavailable")
+        }
+
+        await appModel.performAutomaticRemoteRefresh()
+
+        let listChildrenRequestCount = await driveClient.listChildrenRequestCount
+        XCTAssertEqual(listChildrenRequestCount, 2)
+        guard case .unavailable = appModel.driveChangeTrackingState else {
+            return XCTFail("Expected failed recovery to remain read only")
+        }
+    }
+
     func testRelevantDriveChangeReloadsVaultBeforeAdvancingCursor() async {
         let renamedFile = file(id: "note", name: "renamed.md")
         let driveClient = ControlledAppDriveClient(
@@ -1013,7 +1058,8 @@ final class AppModelConcurrencyTests: XCTestCase {
     private func makeAppModel(
         driveClient: ControlledAppDriveClient,
         vaultStore: any VaultStore = FakeAppVaultStore(),
-        cursorStore: any DriveChangeCursorStore = FakeAppDriveChangeCursorStore()
+        cursorStore: any DriveChangeCursorStore = FakeAppDriveChangeCursorStore(),
+        automaticRemoteRefreshInterval: Duration = .seconds(60)
     ) -> AppModel {
         let authenticationController = AuthenticationController(
             service: FakeAppAuthenticationService()
@@ -1033,7 +1079,8 @@ final class AppModelConcurrencyTests: XCTestCase {
                 changeClient: driveClient,
                 cursorStore: cursorStore
             ),
-            driveChangeReconciler: DriveChangeReconciler(driveItemClient: driveClient)
+            driveChangeReconciler: DriveChangeReconciler(driveItemClient: driveClient),
+            automaticRemoteRefreshInterval: automaticRemoteRefreshInterval
         )
     }
 }
@@ -1187,6 +1234,12 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     func listChanges(since cursor: DriveChangeCursor) async throws -> DriveChangeBatch {
         listChangesRequestCount += 1
         return try changeBatchResult.get()
+    }
+
+    func waitUntilListChangesRequestCount(_ expectedCount: Int) async {
+        while listChangesRequestCount < expectedCount {
+            await Task.yield()
+        }
     }
 
     func downloadFile(id: String) async throws -> DriveFileDownload {

@@ -3,7 +3,7 @@ import SwiftUI
 
 @main
 struct MarkdownDriveApp: App {
-    @NSApplicationDelegateAdaptor(AppTerminationDelegate.self) private var appDelegate
+    @NSApplicationDelegateAdaptor(AppLifecycleDelegate.self) private var appDelegate
     @StateObject private var appModel: AppModel
 
     init() {
@@ -31,10 +31,24 @@ struct MarkdownDriveApp: App {
 }
 
 @MainActor
-private final class AppTerminationDelegate: NSObject, NSApplicationDelegate {
-    weak var appModel: AppModel?
+private final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
+    weak var appModel: AppModel? {
+        didSet {
+            if NSApp.isActive {
+                appModel?.startAutomaticRemoteRefresh()
+            }
+        }
+    }
 
     private var isTerminationPending = false
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        appModel?.startAutomaticRemoteRefresh()
+    }
+
+    func applicationWillResignActive(_ notification: Notification) {
+        appModel?.stopAutomaticRemoteRefresh()
+    }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let appModel else {

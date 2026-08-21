@@ -1,6 +1,6 @@
 # Markdown Drive architecture
 
-Last reviewed: 2026-08-20
+Last reviewed: 2026-08-21
 
 ## Product boundary
 
@@ -57,14 +57,15 @@ AppKit types do not cross into `MarkdownDriveCore`.
 6. Saving verifies the Vault boundary and remote revision again before updating the same Drive file
    ID.
 
-A caller-driven remote refresh requires a prior authoritative Vault load. It reads the
-account-scoped Drive changes feed from the cursor persisted for that account/Vault pair. Automatic
-scheduling and polling are not implemented yet. Changes to IDs already in the tree, folders or
-Markdown files newly found inside the live Vault boundary, and shared-drive-level changes trigger a
-full authoritative tree reload. Changes proven to be outside the Vault and unrelated non-Markdown
-files do not. The next cursor is persisted only after all relevant changes have been reconciled and
-any required reload succeeds. A rejected cursor is removed and rebuilt around a new full load.
-Remote refresh updates the tree but never replaces an open dirty editor buffer.
+A remote refresh requires a prior authoritative Vault load. While the application is active, one
+application-scoped task refreshes immediately on foreground entry and then every 60 seconds; it is
+cancelled when the application resigns active. The refresh reads the account-scoped Drive changes
+feed from the cursor persisted for that account/Vault pair. Changes to IDs already in the tree,
+folders or Markdown files newly found inside the live Vault boundary, and shared-drive-level changes
+trigger a full authoritative tree reload. Changes proven to be outside the Vault and unrelated
+non-Markdown files do not. The next cursor is persisted only after all relevant changes have been
+reconciled and any required reload succeeds. A rejected cursor is removed and rebuilt around a new
+full load. Remote refresh updates the tree but never replaces an open dirty editor buffer.
 
 Safe Drive reads retry once when Google rejects a cached access token: authentication refresh is
 single-flight, the request is rebuilt with the refreshed token, and a second rejection requires the

@@ -104,6 +104,7 @@ final class AppModel: ObservableObject {
     private let vaultStore: any VaultStore
     private let driveChangeCursorCoordinator: DriveChangeCursorCoordinator
     private let driveChangeReconciler: DriveChangeReconciler
+    private let automaticRemoteRefreshInterval: Duration
     private var didAttemptRestore = false
     private var authenticationGeneration: UInt64 = 0
     private var vaultRestoreID: UUID?
@@ -119,6 +120,7 @@ final class AppModel: ObservableObject {
     private var trashVaultTree: VaultTree?
     private var activeDriveChangeCursor: PreparedDriveChangeCursor?
     private var driveChangeRefreshID: UUID?
+    private var automaticRemoteRefreshTask: Task<Void, Never>?
 
     init(
         authenticationController: AuthenticationController,
@@ -132,6 +134,7 @@ final class AppModel: ObservableObject {
         vaultStore: any VaultStore,
         driveChangeCursorCoordinator: DriveChangeCursorCoordinator,
         driveChangeReconciler: DriveChangeReconciler,
+        automaticRemoteRefreshInterval: Duration = .seconds(60),
         initialAuthenticationState: AuthenticationState = .signedOut
     ) {
         self.authenticationController = authenticationController
@@ -145,6 +148,7 @@ final class AppModel: ObservableObject {
         self.vaultStore = vaultStore
         self.driveChangeCursorCoordinator = driveChangeCursorCoordinator
         self.driveChangeReconciler = driveChangeReconciler
+        self.automaticRemoteRefreshInterval = automaticRemoteRefreshInterval
         authenticationState = initialAuthenticationState
     }
 
@@ -528,6 +532,40 @@ final class AppModel: ObservableObject {
             }
             driveChangeTrackingState = .unavailable(error.localizedDescription)
             transitionToReauthenticationIfNeeded(error)
+        }
+    }
+
+    func startAutomaticRemoteRefresh() {
+        guard automaticRemoteRefreshTask == nil else {
+            return
+        }
+        let interval = automaticRemoteRefreshInterval
+        automaticRemoteRefreshTask = Task { [weak self] in
+            await self?.performAutomaticRemoteRefresh()
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: interval)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else {
+                    return
+                }
+                await self?.performAutomaticRemoteRefresh()
+            }
+        }
+    }
+
+    func stopAutomaticRemoteRefresh() {
+        automaticRemoteRefreshTask?.cancel()
+        automaticRemoteRefreshTask = nil
+    }
+
+    func performAutomaticRemoteRefresh() async {
+        if canRefreshRemoteChanges {
+            await refreshRemoteChanges()
+        } else if canRefreshVault {
+            await loadVaultTree()
         }
     }
 
@@ -1070,6 +1108,13 @@ final class AppModel: ObservableObject {
             return true
         }
         return false
+    }
+
+    var driveReadOnlyReason: String? {
+        guard case .unavailable(let message) = driveChangeTrackingState else {
+            return nil
+        }
+        return message
     }
 
     func selectTreeItem(id: String?) async {
