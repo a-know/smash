@@ -1349,6 +1349,10 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         )
     }
 
+    func getReadableFileMetadata(id: String) async throws -> DriveFileMetadata {
+        try await getFileMetadata(id: id)
+    }
+
     func getFileRevision(id: String) async throws -> DriveFileMetadata {
         try await getFileMetadata(id: id)
     }

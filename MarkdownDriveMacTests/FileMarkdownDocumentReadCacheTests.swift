@@ -59,6 +59,23 @@ final class FileMarkdownDocumentReadCacheTests: XCTestCase {
         XCTAssertEqual(rebuilt?.text, "rebuilt")
     }
 
+    func testUnsupportedSchemaVersionIsDiscarded() async throws {
+        let fileURL = try makeCacheFileURL()
+        let cacheScope = scope(accountID: "account", vaultID: "vault")
+        let cache = FileMarkdownDocumentReadCache(fileURL: fileURL)
+        try await cache.saveDocument(document(text: "old schema"), scope: cacheScope)
+        var snapshot = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: fileURL)) as? [String: Any]
+        )
+        snapshot["version"] = 999
+        try JSONSerialization.data(withJSONObject: snapshot).write(to: fileURL, options: .atomic)
+
+        let unsupported = try await cache.loadDocument(fileID: "note", scope: cacheScope)
+
+        XCTAssertNil(unsupported)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
+    }
+
     func testDirtyDocumentIsNeverCached() async throws {
         let cache = FileMarkdownDocumentReadCache(fileURL: try makeCacheFileURL())
         let cacheScope = scope(accountID: "account", vaultID: "vault")

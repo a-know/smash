@@ -22,7 +22,7 @@ public actor VaultDocumentLoader {
         }
 
         let boundaryValidator = VaultBoundaryValidator(driveItemClient: driveContentClient)
-        let currentMetadata = try await driveContentClient.getFileMetadata(id: fileID)
+        let currentMetadata = try await driveContentClient.getReadableFileMetadata(id: fileID)
         guard currentMetadata.item.id == fileID,
             currentMetadata.item.kind == .file,
             MarkdownFileRules.isMarkdownFile(name: currentMetadata.item.name)

@@ -125,11 +125,13 @@ file ID is never treated as proof of Vault membership.
 Google Drive file content is the only authoritative document content. Local persistence includes the
 Vault ID, OAuth refresh credential, non-secret Drive change cursors, and up to 20 recently opened
 clean documents in the macOS Caches directory. Cached documents are scoped by account and Vault and
-include their complete Drive revision. Cache corruption behaves as a miss, stale entries are replaced
-from Drive, and cache read/write failure never blocks a live Drive load. A cache hit still requires
+include their complete Drive revision. The persisted snapshot has an explicit schema version;
+corruption or an unsupported version behaves as a miss. Stale entries are replaced from Drive, and
+cache read/write failure never blocks a live Drive load. A cache hit still requires read-authorized
 live Drive metadata and Vault-boundary validation, so cached content cannot authorize offline editing
-or a write. The in-memory editor buffer can temporarily differ from Drive while it is dirty or while
-an error is being resolved, but it is not a second canonical store.
+or a write. Read-only Drive files remain openable, while save preflight separately requires content-
+modification capability. The in-memory editor buffer can temporarily differ from Drive while it is
+dirty or while an error is being resolved, but it is not a second canonical store.
 
 Refresh, failed authentication, failed networking, selection changes, and ordinary quit requests do
 not silently discard a dirty buffer. Quitting with unsaved changes requires an explicit save,

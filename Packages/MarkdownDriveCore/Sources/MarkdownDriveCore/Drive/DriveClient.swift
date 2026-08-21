@@ -23,11 +23,8 @@ public protocol DriveChangeCursorStore: Sendable {
     func removeCursor(for scope: DriveChangeCursorScope) async throws
 }
 
-public protocol DriveFileMetadataClient: DriveItemClient {
-    func getFileMetadata(id: String) async throws -> DriveFileMetadata
-}
-
-public protocol DriveContentClient: DriveFileMetadataClient {
+public protocol DriveContentClient: DriveItemClient {
+    func getReadableFileMetadata(id: String) async throws -> DriveFileMetadata
     func downloadFile(id: String) async throws -> DriveFileDownload
 }
 
@@ -40,7 +37,8 @@ public protocol DriveFileCreationClient: DriveItemClient {
     ) async throws -> DriveFileMetadata
 }
 
-public protocol DriveWriteClient: DriveFileCreationClient, DriveFileMetadataClient {
+public protocol DriveWriteClient: DriveFileCreationClient {
+    func getFileMetadata(id: String) async throws -> DriveFileMetadata
     func updateFileContent(id: String, data: Data, mimeType: String) async throws -> DriveFileMetadata
 }
 

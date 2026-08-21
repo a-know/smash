@@ -2,6 +2,8 @@ import Foundation
 import MarkdownDriveCore
 
 actor FileMarkdownDocumentReadCache: MarkdownDocumentReadCache {
+    private static let currentSchemaVersion = 1
+
     private let fileURL: URL
     private let maximumEntryCount: Int
 
@@ -63,7 +65,12 @@ actor FileMarkdownDocumentReadCache: MarkdownDocumentReadCache {
         }
         do {
             let data = try Data(contentsOf: fileURL)
-            return try JSONDecoder().decode(Snapshot.self, from: data).entries
+            let snapshot = try JSONDecoder().decode(Snapshot.self, from: data)
+            guard snapshot.version == Self.currentSchemaVersion else {
+                try? FileManager.default.removeItem(at: fileURL)
+                return []
+            }
+            return snapshot.entries
         } catch is DecodingError {
             try? FileManager.default.removeItem(at: fileURL)
             return []
@@ -75,7 +82,9 @@ actor FileMarkdownDocumentReadCache: MarkdownDocumentReadCache {
             at: fileURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        let data = try JSONEncoder().encode(Snapshot(entries: entries))
+        let data = try JSONEncoder().encode(
+            Snapshot(version: Self.currentSchemaVersion, entries: entries)
+        )
         try data.write(to: fileURL, options: .atomic)
     }
 
@@ -100,6 +109,7 @@ actor FileMarkdownDocumentReadCache: MarkdownDocumentReadCache {
 }
 
 private struct Snapshot: Codable {
+    let version: Int
     let entries: [Entry]
 }
 

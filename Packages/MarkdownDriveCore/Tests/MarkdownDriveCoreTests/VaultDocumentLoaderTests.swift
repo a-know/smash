@@ -394,7 +394,7 @@ private actor FakeDriveContentClient: DriveContentClient {
         try itemResults[id, default: .failure(.itemNotFound)].get()
     }
 
-    func getFileMetadata(id: String) async throws -> DriveFileMetadata {
+    func getReadableFileMetadata(id: String) async throws -> DriveFileMetadata {
         try metadataResults[id, default: .failure(.itemNotFound)].get()
     }
 
