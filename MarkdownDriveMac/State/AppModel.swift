@@ -121,6 +121,7 @@ final class AppModel: ObservableObject {
     private var activeDriveChangeCursor: PreparedDriveChangeCursor?
     private var driveChangeRefreshID: UUID?
     private var automaticRemoteRefreshTask: Task<Void, Never>?
+    private var automaticRemoteRefreshGeneration: UInt64 = 0
 
     init(
         authenticationController: AuthenticationController,
@@ -539,16 +540,18 @@ final class AppModel: ObservableObject {
         guard automaticRemoteRefreshTask == nil else {
             return
         }
+        automaticRemoteRefreshGeneration &+= 1
+        let generation = automaticRemoteRefreshGeneration
         let interval = automaticRemoteRefreshInterval
         automaticRemoteRefreshTask = Task { [weak self] in
             await self?.performAutomaticRemoteRefresh()
-            while !Task.isCancelled {
+            while self?.automaticRemoteRefreshGeneration == generation {
                 do {
                     try await Task.sleep(for: interval)
                 } catch {
                     return
                 }
-                guard !Task.isCancelled else {
+                guard self?.automaticRemoteRefreshGeneration == generation else {
                     return
                 }
                 await self?.performAutomaticRemoteRefresh()
@@ -557,11 +560,14 @@ final class AppModel: ObservableObject {
     }
 
     func stopAutomaticRemoteRefresh() {
-        automaticRemoteRefreshTask?.cancel()
+        automaticRemoteRefreshGeneration &+= 1
         automaticRemoteRefreshTask = nil
     }
 
     func performAutomaticRemoteRefresh() async {
+        guard driveChangeRefreshID == nil else {
+            return
+        }
         if canRefreshRemoteChanges {
             await refreshRemoteChanges()
         } else if canRefreshVault {

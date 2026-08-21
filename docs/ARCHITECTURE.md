@@ -59,8 +59,11 @@ AppKit types do not cross into `MarkdownDriveCore`.
 
 A remote refresh requires a prior authoritative Vault load. While the application is active, one
 application-scoped task refreshes immediately on foreground entry and then every 60 seconds; it is
-cancelled when the application resigns active. The refresh reads the account-scoped Drive changes
-feed from the cursor persisted for that account/Vault pair. Changes to IDs already in the tree,
+stopped when the application resigns active. Stopping invalidates future ticks without cancelling a
+safe Drive read that has already started, so ordinary backgrounding is not reported as a network
+failure. A quick foreground return coalesces with that read instead of starting a full Vault reload.
+The refresh reads the account-scoped Drive changes feed from the cursor persisted for that
+account/Vault pair. Changes to IDs already in the tree,
 folders or Markdown files newly found inside the live Vault boundary, and shared-drive-level changes
 trigger a full authoritative tree reload. Changes proven to be outside the Vault and unrelated
 non-Markdown files do not. The next cursor is persisted only after all relevant changes have been

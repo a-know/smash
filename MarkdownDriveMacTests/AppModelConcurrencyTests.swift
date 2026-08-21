@@ -136,7 +136,8 @@ final class AppModelConcurrencyTests: XCTestCase {
 
     func testAutomaticRemoteRefreshRunsImmediatelyAndPeriodicallyWithoutDuplicateLoops() async throws {
         let driveClient = ControlledAppDriveClient(
-            treeResponses: [TreeResponse(items: [file(id: "note", name: "note.md")])]
+            treeResponses: [TreeResponse(items: [file(id: "note", name: "note.md")])],
+            waitsForFirstListChangesCompletion: true
         )
         let appModel = makeAppModel(
             driveClient: driveClient,
@@ -146,13 +147,51 @@ final class AppModelConcurrencyTests: XCTestCase {
 
         appModel.startAutomaticRemoteRefresh()
         appModel.startAutomaticRemoteRefresh()
-        await driveClient.waitUntilListChangesRequestCount(2)
+        try await driveClient.waitUntilListChangesRequestCount(1)
+        try await Task.sleep(nanoseconds: 60_000_000)
+        var requestCount = await driveClient.listChangesRequestCount
+        XCTAssertEqual(requestCount, 1)
+
+        appModel.stopAutomaticRemoteRefresh()
+        appModel.startAutomaticRemoteRefresh()
+        try await Task.sleep(nanoseconds: 60_000_000)
+        requestCount = await driveClient.listChangesRequestCount
+        XCTAssertEqual(requestCount, 1)
+        let listChildrenRequestCount = await driveClient.listChildrenRequestCount
+        XCTAssertEqual(listChildrenRequestCount, 1)
+
+        await driveClient.completeFirstListChanges()
+        try await driveClient.waitUntilListChangesRequestCount(2)
         appModel.stopAutomaticRemoteRefresh()
 
         let requestCountAfterStop = await driveClient.listChangesRequestCount
         try await Task.sleep(nanoseconds: 60_000_000)
         let finalRequestCount = await driveClient.listChangesRequestCount
         XCTAssertEqual(finalRequestCount, requestCountAfterStop)
+    }
+
+    func testStoppingAutomaticRefreshDoesNotCancelAnInFlightDriveRead() async throws {
+        let driveClient = ControlledAppDriveClient(
+            treeResponses: [TreeResponse(items: [file(id: "note", name: "note.md")])],
+            waitsForFirstListChangesCompletion: true
+        )
+        let appModel = makeAppModel(
+            driveClient: driveClient,
+            automaticRemoteRefreshInterval: .seconds(1)
+        )
+        await appModel.restoreSession()
+
+        appModel.startAutomaticRemoteRefresh()
+        try await driveClient.waitUntilListChangesRequestCount(1)
+        appModel.stopAutomaticRemoteRefresh()
+        await driveClient.completeFirstListChanges()
+        try await Task.sleep(nanoseconds: 30_000_000)
+
+        let requestCount = await driveClient.listChangesRequestCount
+        XCTAssertEqual(requestCount, 1)
+        guard case .ready = appModel.driveChangeTrackingState else {
+            return XCTFail("Expected lifecycle stop not to report a network failure")
+        }
     }
 
     func testAutomaticRemoteRefreshRetriesAuthoritativeLoadWhenTrackingIsUnavailable() async {
@@ -1114,6 +1153,7 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     private let trashReconciliationItem: DriveItem?
     private let waitsForTrashReconciliationCompletion: Bool
     private let waitsForSecondListChildrenCompletion: Bool
+    private let waitsForFirstListChangesCompletion: Bool
     private let accountError: DriveError?
     private let changeBatchResult: Result<DriveChangeBatch, DriveError>
     private var renamedItems: [String: DriveItem] = [:]
@@ -1125,6 +1165,7 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
     private var trashContinuation: CheckedContinuation<Void, Never>?
     private var trashReconciliationContinuation: CheckedContinuation<Void, Never>?
     private var secondListChildrenContinuation: CheckedContinuation<Void, Never>?
+    private var firstListChangesContinuation: CheckedContinuation<Void, Never>?
     private var didStartDownload = false
     private var didStartUpdate = false
     private var didStartRename = false
@@ -1154,6 +1195,7 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         trashReconciliationItem: DriveItem? = nil,
         waitsForTrashReconciliationCompletion: Bool = false,
         waitsForSecondListChildrenCompletion: Bool = false,
+        waitsForFirstListChangesCompletion: Bool = false,
         accountError: DriveError? = nil,
         changeBatchResult: Result<DriveChangeBatch, DriveError> = .success(
             DriveChangeBatch(
@@ -1174,6 +1216,7 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
         self.trashReconciliationItem = trashReconciliationItem
         self.waitsForTrashReconciliationCompletion = waitsForTrashReconciliationCompletion
         self.waitsForSecondListChildrenCompletion = waitsForSecondListChildrenCompletion
+        self.waitsForFirstListChangesCompletion = waitsForFirstListChangesCompletion
         self.accountError = accountError
         self.changeBatchResult = changeBatchResult
     }
@@ -1233,13 +1276,29 @@ private actor ControlledAppDriveClient: DriveClient, DriveContentClient, DriveWr
 
     func listChanges(since cursor: DriveChangeCursor) async throws -> DriveChangeBatch {
         listChangesRequestCount += 1
+        if waitsForFirstListChangesCompletion,
+            listChangesRequestCount == 1
+        {
+            await withCheckedContinuation { continuation in
+                firstListChangesContinuation = continuation
+            }
+        }
         return try changeBatchResult.get()
     }
 
-    func waitUntilListChangesRequestCount(_ expectedCount: Int) async {
-        while listChangesRequestCount < expectedCount {
-            await Task.yield()
+    func waitUntilListChangesRequestCount(_ expectedCount: Int) async throws {
+        for _ in 0..<200 {
+            if listChangesRequestCount >= expectedCount {
+                return
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
         }
+        throw AppModelTestSynchronizationError.timedOut
+    }
+
+    func completeFirstListChanges() {
+        firstListChangesContinuation?.resume()
+        firstListChangesContinuation = nil
     }
 
     func downloadFile(id: String) async throws -> DriveFileDownload {
