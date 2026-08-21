@@ -1264,7 +1264,8 @@ final class AppModel: ObservableObject {
         do {
             let remoteDocument = try await vaultDocumentLoader.load(
                 fileID: documentBeingReloaded.fileID,
-                from: tree
+                from: tree,
+                cacheScope: activeDriveChangeCursor?.scope
             )
             guard authenticationGeneration == generation,
                 case .loaded(let currentDocument) = documentState,
@@ -1471,7 +1472,11 @@ final class AppModel: ObservableObject {
         documentState = .loading(fileID: fileID)
         documentSaveState = .idle
         do {
-            let document = try await vaultDocumentLoader.load(fileID: fileID, from: tree)
+            let document = try await vaultDocumentLoader.load(
+                fileID: fileID,
+                from: tree,
+                cacheScope: activeDriveChangeCursor?.scope
+            )
             guard documentLoadID == loadID,
                 authenticationGeneration == generation
             else {

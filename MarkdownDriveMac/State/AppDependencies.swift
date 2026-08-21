@@ -14,11 +14,15 @@ enum AppDependencies {
             changeClient: driveClient,
             cursorStore: UserDefaultsDriveChangeCursorStore()
         )
+        let documentReadCache = FileMarkdownDocumentReadCache()
         return AppModel(
             authenticationController: authenticationController,
             driveFolderBrowser: DriveFolderBrowser(driveClient: driveClient),
             vaultTreeLoader: VaultTreeLoader(driveClient: driveClient),
-            vaultDocumentLoader: VaultDocumentLoader(driveContentClient: driveClient),
+            vaultDocumentLoader: VaultDocumentLoader(
+                driveContentClient: driveClient,
+                documentReadCache: documentReadCache
+            ),
             vaultDocumentSaver: VaultDocumentSaver(driveWriteClient: driveClient),
             vaultItemCreator: VaultItemCreator(driveClient: driveClient),
             vaultItemRenamer: VaultItemRenamer(driveClient: driveClient),

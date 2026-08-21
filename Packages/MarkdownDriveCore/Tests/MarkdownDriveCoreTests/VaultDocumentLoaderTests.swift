@@ -27,6 +27,108 @@ final class VaultDocumentLoaderTests: XCTestCase {
         XCTAssertFalse(document.isDirty)
     }
 
+    func testUsesVersionMatchedCachedDocumentWithoutDownloadingContents() async throws {
+        let revision = makeRevision()
+        let cachedDocument = MarkdownDocument(
+            fileID: "note",
+            name: "note.md",
+            text: "cached text",
+            remoteRevision: revision
+        )
+        let cache = FakeMarkdownDocumentReadCache(documents: [cachedDocument])
+        let client = FakeDriveContentClient(
+            result: .failure(.networkFailure),
+            metadataResults: [
+                "note": .success(
+                    DriveFileMetadata(
+                        item: file(id: "note", parentIDs: ["nested"]),
+                        revision: revision
+                    )
+                )
+            ]
+        )
+        let loader = VaultDocumentLoader(
+            driveContentClient: client,
+            documentReadCache: cache
+        )
+
+        let document = try await loader.load(
+            fileID: "note",
+            from: makeTree(),
+            cacheScope: makeCacheScope()
+        )
+
+        XCTAssertEqual(document, cachedDocument)
+        let requestedIDs = await client.requestedIDs()
+        XCTAssertEqual(requestedIDs, [])
+    }
+
+    func testStaleCachedDocumentIsReplacedFromDrive() async throws {
+        let cachedDocument = MarkdownDocument(
+            fileID: "note",
+            name: "note.md",
+            text: "stale text",
+            remoteRevision: makeRevision()
+        )
+        let currentRevision = DriveFileRevision(
+            version: "2",
+            modifiedTime: Date(timeIntervalSince1970: 1_700_000_100)
+        )
+        let cache = FakeMarkdownDocumentReadCache(documents: [cachedDocument])
+        let client = FakeDriveContentClient(
+            result: .success(
+                DriveFileDownload(
+                    item: file(id: "note", parentIDs: ["nested"]),
+                    data: Data("current text".utf8),
+                    revision: currentRevision
+                )
+            )
+        )
+        let loader = VaultDocumentLoader(
+            driveContentClient: client,
+            documentReadCache: cache
+        )
+
+        let document = try await loader.load(
+            fileID: "note",
+            from: makeTree(),
+            cacheScope: makeCacheScope()
+        )
+
+        XCTAssertEqual(document.text, "current text")
+        XCTAssertEqual(document.remoteRevision, currentRevision)
+        let cachedReplacement = try await cache.loadDocument(
+            fileID: "note",
+            scope: makeCacheScope()
+        )
+        XCTAssertEqual(cachedReplacement, document)
+    }
+
+    func testCacheFailureDoesNotPreventDriveLoad() async throws {
+        let cache = FakeMarkdownDocumentReadCache(loadError: .networkFailure)
+        let client = FakeDriveContentClient(
+            result: .success(
+                DriveFileDownload(
+                    item: file(id: "note", parentIDs: ["nested"]),
+                    data: Data("remote text".utf8),
+                    revision: makeRevision()
+                )
+            )
+        )
+        let loader = VaultDocumentLoader(
+            driveContentClient: client,
+            documentReadCache: cache
+        )
+
+        let document = try await loader.load(
+            fileID: "note",
+            from: makeTree(),
+            cacheScope: makeCacheScope()
+        )
+
+        XCTAssertEqual(document.text, "remote text")
+    }
+
     func testDocumentTracksDirtyStateAgainstLastSavedText() {
         let revision = makeRevision()
         var document = MarkdownDocument(
@@ -220,16 +322,25 @@ final class VaultDocumentLoaderTests: XCTestCase {
             modifiedTime: Date(timeIntervalSince1970: 1_700_000_000)
         )
     }
+
+    private func makeCacheScope() -> DriveChangeCursorScope {
+        DriveChangeCursorScope(
+            accountID: DriveAccountID(rawValue: "account"),
+            vaultRootFolderID: "vault"
+        )
+    }
 }
 
 private actor FakeDriveContentClient: DriveContentClient {
     private let result: Result<DriveFileDownload, DriveError>
     private let itemResults: [String: Result<DriveItem, DriveError>]
+    private let metadataResults: [String: Result<DriveFileMetadata, DriveError>]
     private var requestedFileIDs: [String] = []
 
     init(
         result: Result<DriveFileDownload, DriveError>,
-        itemResults: [String: Result<DriveItem, DriveError>]? = nil
+        itemResults: [String: Result<DriveItem, DriveError>]? = nil,
+        metadataResults: [String: Result<DriveFileMetadata, DriveError>]? = nil
     ) {
         self.result = result
         var resolvedItemResults: [String: Result<DriveItem, DriveError>] = [
@@ -253,10 +364,38 @@ private actor FakeDriveContentClient: DriveContentClient {
         ]
         resolvedItemResults.merge(itemResults ?? [:]) { _, replacement in replacement }
         self.itemResults = resolvedItemResults
+        let revision: DriveFileRevision
+        switch result {
+        case .success(let download):
+            revision = download.revision
+        case .failure:
+            revision = DriveFileRevision(
+                version: "1",
+                modifiedTime: Date(timeIntervalSince1970: 1_700_000_000)
+            )
+        }
+        let noteItem =
+            (try? resolvedItemResults["note"]?.get())
+            ?? DriveItem(
+                id: "note",
+                name: "note.md",
+                kind: .file,
+                mimeType: "text/markdown",
+                parentIDs: ["nested"]
+            )
+        var resolvedMetadataResults: [String: Result<DriveFileMetadata, DriveError>] = [
+            "note": .success(DriveFileMetadata(item: noteItem, revision: revision))
+        ]
+        resolvedMetadataResults.merge(metadataResults ?? [:]) { _, replacement in replacement }
+        self.metadataResults = resolvedMetadataResults
     }
 
     func getItem(id: String) async throws -> DriveItem {
         try itemResults[id, default: .failure(.itemNotFound)].get()
+    }
+
+    func getReadableFileMetadata(id: String) async throws -> DriveFileMetadata {
+        try metadataResults[id, default: .failure(.itemNotFound)].get()
     }
 
     func downloadFile(id: String) async throws -> DriveFileDownload {
@@ -266,5 +405,35 @@ private actor FakeDriveContentClient: DriveContentClient {
 
     func requestedIDs() -> [String] {
         requestedFileIDs
+    }
+}
+
+private actor FakeMarkdownDocumentReadCache: MarkdownDocumentReadCache {
+    private var documents: [String: MarkdownDocument]
+    private let loadError: DriveError?
+
+    init(
+        documents: [MarkdownDocument] = [],
+        loadError: DriveError? = nil
+    ) {
+        self.documents = Dictionary(uniqueKeysWithValues: documents.map { ($0.fileID, $0) })
+        self.loadError = loadError
+    }
+
+    func loadDocument(
+        fileID: String,
+        scope: DriveChangeCursorScope
+    ) throws -> MarkdownDocument? {
+        if let loadError {
+            throw loadError
+        }
+        return documents[fileID]
+    }
+
+    func saveDocument(
+        _ document: MarkdownDocument,
+        scope: DriveChangeCursorScope
+    ) {
+        documents[document.fileID] = document
     }
 }

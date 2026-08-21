@@ -65,6 +65,12 @@ public struct GoogleDriveAPIClient: DriveClient, DriveContentClient, DriveWriteC
         return try file.metadata
     }
 
+    public func getReadableFileMetadata(id: String) async throws -> DriveFileMetadata {
+        let file = try await getFileResource(id: id)
+        try validateDownload(file)
+        return try file.metadata
+    }
+
     public func getFileRevision(id: String) async throws -> DriveFileMetadata {
         let file = try await getFileResource(id: id)
         guard file.mimeType != Self.folderMimeType else {

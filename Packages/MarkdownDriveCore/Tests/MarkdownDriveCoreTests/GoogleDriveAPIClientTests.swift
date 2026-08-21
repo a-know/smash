@@ -570,6 +570,47 @@ final class GoogleDriveAPIClientTests: XCTestCase {
         }
     }
 
+    func testGetsReadableMetadataWithoutModificationCapability() async throws {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(
+                statusCode: 200,
+                body: fileMetadata(
+                    version: "4",
+                    canDownload: true,
+                    canModifyContent: false
+                )
+            )
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        let metadata = try await client.getReadableFileMetadata(id: "file-1")
+
+        XCTAssertEqual(metadata.revision.version, "4")
+    }
+
+    func testReadableMetadataRequiresDownloadCapability() async {
+        let transport = FakeDriveHTTPTransport(responses: [
+            .success(
+                statusCode: 200,
+                body: fileMetadata(version: "1", canDownload: false)
+            )
+        ])
+        let client = GoogleDriveAPIClient(
+            accessTokenProvider: FakeDriveAccessTokenProvider(),
+            transport: transport
+        )
+
+        do {
+            _ = try await client.getReadableFileMetadata(id: "file-1")
+            XCTFail("Expected download restriction")
+        } catch {
+            XCTAssertEqual(error as? DriveError, .downloadNotAllowed)
+        }
+    }
+
     func testGetsRevisionForRenameWithoutContentModificationCapability() async throws {
         let transport = FakeDriveHTTPTransport(responses: [
             .success(

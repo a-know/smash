@@ -24,6 +24,7 @@ public protocol DriveChangeCursorStore: Sendable {
 }
 
 public protocol DriveContentClient: DriveItemClient {
+    func getReadableFileMetadata(id: String) async throws -> DriveFileMetadata
     func downloadFile(id: String) async throws -> DriveFileDownload
 }
 
@@ -74,7 +75,7 @@ public struct DriveItemRenameResult: Equatable, Sendable {
     }
 }
 
-public struct DriveFileRevision: Equatable, Sendable {
+public struct DriveFileRevision: Codable, Equatable, Sendable {
     public let version: String
     public let modifiedTime: Date
     public let contentChecksum: String?
