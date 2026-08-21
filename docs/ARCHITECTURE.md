@@ -49,11 +49,13 @@ AppKit types do not cross into `MarkdownDriveCore`.
 2. The selected Vault ID is restored from UserDefaults.
 3. `VaultTreeLoader` starts at that ID and recursively lists descendants, following every Drive API
    page. Only folders and Markdown files are exposed to the application UI.
-4. Selecting or reloading a file verifies that its ID belongs to the loaded Vault tree and validates
-   its current Drive ancestor chain before downloading. The chain is checked again after the stable
-   UTF-8 download before the editor accepts the result.
-5. The editor holds a `MarkdownDocument` containing the current text, last-saved text, and the Drive
-   revision observed during the stable download.
+4. Selecting or reloading a file verifies that its ID belongs to the loaded Vault tree, fetches its
+   current Drive revision, and validates its current Drive ancestor chain. When an account/Vault-
+   scoped cached document has the same name and complete revision, its UTF-8 text can be used without
+   downloading the contents again. Otherwise Drive is downloaded and the chain is checked again
+   before the editor accepts and caches the result.
+5. The editor holds a `MarkdownDocument` containing the current text, last-saved text, and the live
+   Drive revision validated for that text.
 6. Saving verifies the Vault boundary and remote revision again before updating the same Drive file
    ID.
 
@@ -120,10 +122,14 @@ file ID is never treated as proof of Vault membership.
 
 ## Local state and source of truth
 
-Google Drive file content is the only authoritative document content. Local persistence is limited
-to the Vault ID, OAuth refresh credential, and non-secret Drive change cursors scoped by account and
-Vault. The in-memory editor buffer can temporarily differ from Drive while it is dirty or while an
-error is being resolved, but it is not a second canonical store.
+Google Drive file content is the only authoritative document content. Local persistence includes the
+Vault ID, OAuth refresh credential, non-secret Drive change cursors, and up to 20 recently opened
+clean documents in the macOS Caches directory. Cached documents are scoped by account and Vault and
+include their complete Drive revision. Cache corruption behaves as a miss, stale entries are replaced
+from Drive, and cache read/write failure never blocks a live Drive load. A cache hit still requires
+live Drive metadata and Vault-boundary validation, so cached content cannot authorize offline editing
+or a write. The in-memory editor buffer can temporarily differ from Drive while it is dirty or while
+an error is being resolved, but it is not a second canonical store.
 
 Refresh, failed authentication, failed networking, selection changes, and ordinary quit requests do
 not silently discard a dirty buffer. Quitting with unsaved changes requires an explicit save,
